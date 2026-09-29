@@ -26,6 +26,7 @@ _INPUT = {
     CONF_STARTUP_DELAY_SECONDS: 120,
     CONF_REFREEZE_INTERVAL_HOURS: 6,
     "light_freeze_seconds": 0,
+    "pause_gc_until_freeze": False,
     CONF_DAILY_MAINTENANCE: True,
     CONF_DAILY_TIME: "04:00:00",
     CONF_SET_THRESHOLDS: False,

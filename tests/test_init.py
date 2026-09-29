@@ -331,6 +331,90 @@ async def test_light_freeze_is_off_by_default(hass):
         assert len(m_interval.call_args_list) == 1  # only the count sampler
 
 
+async def test_automatic_gc_is_off_from_setup_until_the_startup_freeze(hass):
+    """On a real start with pause_gc_until_freeze, automatic collection is
+    turned off at setup and back on once the startup freeze has run."""
+    entry = _entry(hass, pause_gc_until_freeze=True, startup_delay_seconds=120)
+    fake_gc = _fake_gc()
+    fake_gc.isenabled.return_value = True
+    hass.set_state(CoreState.starting)
+    p_gc, p_change, p_interval, p_cl, p_started, p_fwd = _patches(fake_gc, hass)
+    with p_gc, p_change, p_interval, p_cl as m_cl, p_started as m_started, p_fwd:
+        assert await async_setup_entry(hass, entry)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        fake_gc.disable.assert_called_once()
+        fake_gc.enable.assert_not_called()
+        m_started.call_args.args[1](hass)  # Home Assistant has started
+        freeze = next(c for c in m_cl.call_args_list if c.args[1] == 120).args[2]
+        fake_gc.enable.assert_not_called()  # still settling
+        await freeze(None)
+        fake_gc.freeze.assert_called_once()
+        fake_gc.enable.assert_called_once()
+
+
+async def test_the_watchdog_turns_automatic_gc_back_on(hass):
+    """A start that never reaches its freeze must not leave the collector off."""
+    from custom_components.gc_manager.const import PAUSE_GC_WATCHDOG_SECONDS
+
+    entry = _entry(hass, pause_gc_until_freeze=True)
+    fake_gc = _fake_gc()
+    fake_gc.isenabled.return_value = True
+    hass.set_state(CoreState.starting)
+    p_gc, p_change, p_interval, p_cl, p_started, p_fwd = _patches(fake_gc, hass)
+    with p_gc, p_change, p_interval, p_cl as m_cl, p_started, p_fwd:
+        assert await async_setup_entry(hass, entry)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        watchdog = next(
+            c for c in m_cl.call_args_list if c.args[1] == PAUSE_GC_WATCHDOG_SECONDS
+        ).args[2]
+        watchdog(None)
+        fake_gc.enable.assert_called_once()
+        watchdog(None)
+        fake_gc.enable.assert_called_once()  # only ever undoes its own pause
+
+
+async def test_unload_turns_automatic_gc_back_on(hass):
+    entry = _entry(hass, pause_gc_until_freeze=True)
+    fake_gc = _fake_gc()
+    fake_gc.isenabled.return_value = True
+    hass.set_state(CoreState.starting)
+    p_gc, p_change, p_interval, p_cl, p_started, p_fwd = _patches(fake_gc, hass)
+    with (
+        p_gc,
+        p_change,
+        p_interval,
+        p_cl,
+        p_started,
+        p_fwd,
+        patch.object(
+            hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True)
+        ),
+    ):
+        assert await async_setup_entry(hass, entry)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        fake_gc.disable.assert_called_once()
+        assert await async_unload_entry(hass, entry)
+        fake_gc.enable.assert_called_once()
+
+
+async def test_automatic_gc_is_left_alone_by_default_and_on_a_reload(hass):
+    for opts, state in (
+        ({}, CoreState.starting),
+        ({"pause_gc_until_freeze": True}, CoreState.running),
+    ):
+        entry = _entry(hass, **opts)
+        fake_gc = _fake_gc()
+        fake_gc.isenabled.return_value = True
+        hass.set_state(state)
+        p_gc, p_change, p_interval, p_cl, p_started, p_fwd = _patches(fake_gc, hass)
+        with p_gc, p_change, p_interval, p_cl, p_started, p_fwd:
+            assert await async_setup_entry(hass, entry)
+            await hass.async_block_till_done(wait_background_tasks=True)
+            fake_gc.disable.assert_not_called()
+        hass.data.pop(DOMAIN, None)
+        await hass.config_entries.async_remove(entry.entry_id)
+
+
 async def test_install_reload_freezes_immediately_no_delay(hass):
     entry = _entry(hass)
     fake_gc, _change, m_cl, _started = await _setup(hass, entry, running=True)

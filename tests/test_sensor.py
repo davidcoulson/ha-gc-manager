@@ -35,14 +35,16 @@ def _fake_controller():
         peak_pause_ms=97.3,
         last_result=result,
         light_freezes=7,
+        pause_count=12,
+        pause_total_ms=2345.67,
         last_light_freeze_ms=3.4,
     )
 
 
 def test_description_set_is_complete():
     keys = {d.key for d in DESCRIPTIONS}
-    # 13 singletons (two for the light freeze) + 5 series × 3 generations
-    assert len(DESCRIPTIONS) == 13 + 5 * 3
+    # 15 singletons (two for the light freeze, two pause totals) + 5 series × 3 generations
+    assert len(DESCRIPTIONS) == 15 + 5 * 3
     assert {"frozen_objects", "tracked_objects", "last_pause", "peak_pause"} <= keys
     assert {
         "last_pause_time",

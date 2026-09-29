@@ -10,6 +10,7 @@ import time
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
+import pytest
 from homeassistant.util import dt as dt_util
 
 from custom_components.gc_manager.gc_controller import GcController
@@ -313,3 +314,19 @@ async def test_light_freeze_steps_aside_for_a_compound_operation(hass):
             assert await controller.async_light_freeze() is None
         g.freeze.assert_not_called()
         assert controller.light_freezes == 0
+
+
+def test_gen2_pauses_are_counted_and_added_up(hass):
+    g = _const_gc()
+    with patch("custom_components.gc_manager.gc_controller.gc", g):
+        controller = GcController(hass, _LOG)
+        for _ in range(3):
+            controller._on_gc("start", {"generation": 2})
+            controller._on_gc("stop", {"generation": 2})
+        controller._on_gc("start", {"generation": 0})
+        controller._on_gc("stop", {"generation": 0})  # young collections are not pauses
+        assert controller.pause_count == 3
+        assert (
+            controller.pause_total_ms >= 0
+            and controller.pause_total_ms == pytest.approx(controller.pause_total_ms)
+        )
