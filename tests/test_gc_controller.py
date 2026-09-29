@@ -288,7 +288,7 @@ async def test_freeze_skips_the_frozen_set_counts_when_nothing_shows_them(hass):
         assert result.frozen_after is None
 
 
-async def test_light_freeze_collects_only_the_young_generations_then_freezes(hass):
+async def test_light_freeze_runs_a_full_collection_then_freezes(hass):
     g = _const_gc()
     with patch("custom_components.gc_manager.gc_controller.gc", g):
         controller = GcController(hass, _LOG)
@@ -299,7 +299,7 @@ async def test_light_freeze_collects_only_the_young_generations_then_freezes(has
             for c in g.method_calls
             if c[0] in ("collect", "freeze", "get_freeze_count", "unfreeze")
         ] == ["collect", "freeze"]
-        g.collect.assert_called_once_with(1)
+        g.collect.assert_called_once_with()  # full: collect(1) froze aged garbage
         assert controller.light_freezes == 1 and controller.last_light_freeze_ms == took
         # not a freeze for the re-freeze debounce, and not news for the action sensors
         assert controller.last_freeze_at is None and controller.last_result is None

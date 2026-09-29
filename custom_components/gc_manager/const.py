@@ -36,7 +36,7 @@ MAX_STARTUP_DELAY_SECONDS: Final = 3600
 # of 24 and aligned to a wall-clock grid phased off the maintenance time (see
 # refreeze_slots) so runs stay evenly spaced regardless of when HA started.
 CONF_REFREEZE_INTERVAL_HOURS: Final = "refreeze_interval_hours"
-# Light freeze: a young collection then freeze(), every few seconds-to-minutes.
+# Light freeze: a collection then freeze(), every few seconds-to-minutes.
 # A full collection scans every object created since the last freeze, and a busy
 # instance creates hundreds of thousands within minutes of one, so an hourly
 # re-freeze barely shortens the everyday pause. 0 = off.

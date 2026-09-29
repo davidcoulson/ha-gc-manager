@@ -7,7 +7,7 @@
         "data": {
           "freeze_on_start": "Freeze the heap after startup",
           "startup_delay_seconds": "Settle delay after an HA restart before the first freeze (seconds; 0 = immediate). Ignored on install/reload.",
-          "light_freeze_seconds": "Light freeze interval (seconds, 0 = off): a young collection then freeze, so full collections only scan what was created since",
+          "light_freeze_seconds": "Light freeze interval (seconds, 0 = off): a collection then freeze, so full collections only scan what was created since",
           "refreeze_interval_hours": "Periodic re-freeze interval (hours, 0 = off; rounded to a divisor of 24 and aligned to the maintenance time)",
           "daily_maintenance": "Daily unfreeze + collect + freeze (if off, the periodic re-freeze does this reset instead)",
           "daily_time": "Daily maintenance time",
@@ -29,7 +29,7 @@
         "data": {
           "freeze_on_start": "Freeze the heap after startup",
           "startup_delay_seconds": "Settle delay after an HA restart before the first freeze (seconds; 0 = immediate). Ignored on install/reload.",
-          "light_freeze_seconds": "Light freeze interval (seconds, 0 = off): a young collection then freeze, so full collections only scan what was created since",
+          "light_freeze_seconds": "Light freeze interval (seconds, 0 = off): a collection then freeze, so full collections only scan what was created since",
           "refreeze_interval_hours": "Periodic re-freeze interval (hours, 0 = off; rounded to a divisor of 24 and aligned to the maintenance time)",
           "daily_maintenance": "Daily unfreeze + collect + freeze (if off, the periodic re-freeze does this reset instead)",
           "daily_time": "Daily maintenance time",

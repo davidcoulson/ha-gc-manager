@@ -311,7 +311,7 @@ async def test_light_freeze_is_scheduled_and_waits_for_the_first_freeze(hass):
         await controller.async_collect_and_freeze("startup freeze")
         fake_gc.freeze.reset_mock()
         await ticks[0].args[1](None)
-        fake_gc.collect.assert_called_with(1)
+        fake_gc.collect.assert_called_with()
         fake_gc.freeze.assert_called_once()
 
 

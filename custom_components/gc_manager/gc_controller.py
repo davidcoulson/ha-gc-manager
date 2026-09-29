@@ -147,13 +147,16 @@ class GcController:
         return gc.get_freeze_count() if counting else None
 
     async def async_light_freeze(self) -> float | None:
-        """Young collection then freeze(): keep the unfrozen set small.
+        """Collect, then freeze(): keep the unfrozen set small.
 
-        collect(1) sweeps only the two young generations (a few thousand
-        objects, milliseconds) so fresh garbage is not frozen; freeze() then
-        moves every survivor out of the collector's reach. The next full
-        collection has only what was created since to scan. Cycles that die
-        AFTER being frozen wait for the daily maintenance, as with any freeze.
+        The collection is a FULL one. It is cheap here - it scans only what
+        was created since the last light freeze - and it has to be full: a
+        young-only collect(1) left the garbage that had already aged into the
+        old generation to be frozen, and on a busy instance that is ~30,000
+        objects a minute (1.8 M objects, ~800 MB, leaked in the hour it was
+        tried). freeze() then moves every survivor out of the collector's
+        reach. Cycles that die AFTER being frozen still wait for the daily
+        maintenance, as with any freeze.
 
         Skipped while a compound operation holds the lock. Does not count as
         a freeze for the periodic re-freeze's debounce, and leaves the last
@@ -167,7 +170,7 @@ class GcController:
                 start = time.perf_counter()
                 self._collecting_tid = threading.get_ident()
                 try:
-                    gc.collect(1)
+                    gc.collect()
                 finally:
                     self._collecting_tid = None
                 gc.freeze()
