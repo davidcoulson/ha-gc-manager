@@ -338,6 +338,41 @@ async def test_automatic_gc_is_left_alone_by_default_and_on_a_reload(hass):
         await hass.config_entries.async_remove(entry.entry_id)
 
 
+async def test_count_sampler_skips_while_both_count_sensors_are_disabled(hass):
+    """The frozen/tracked walks hold the GIL for their whole length, so with
+    both count sensors disabled there is nothing to sample for: no walk runs.
+    Re-enabling either one brings the sampling back on the next tick."""
+    from homeassistant.helpers import entity_registry as er
+
+    entry = _entry(hass, freeze_on_start=False)
+    reg = er.async_get(hass)
+    for key in ("frozen_objects", "tracked_objects"):
+        reg.async_get_or_create(
+            "sensor",
+            DOMAIN,
+            f"{entry.entry_id}_{key}",
+            config_entry=entry,
+            disabled_by=er.RegistryEntryDisabler.USER,
+        )
+    fake_gc = _fake_gc()
+    hass.set_state(CoreState.running)
+    p_gc, p_change, p_interval, p_cl, p_started, p_fwd = _patches(fake_gc, hass)
+    with p_gc, p_change, p_interval as m_interval, p_cl, p_started, p_fwd:
+        assert await async_setup_entry(hass, entry)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        controller = hass.data[DOMAIN][entry.entry_id].controller
+        fake_gc.get_freeze_count.assert_not_called()
+        fake_gc.get_objects.assert_not_called()
+        assert controller.frozen_count is None
+        # enable one: the next scheduled tick samples again
+        eid = reg.async_get_entity_id(
+            "sensor", DOMAIN, f"{entry.entry_id}_tracked_objects"
+        )
+        reg.async_update_entity(eid, disabled_by=None)
+        await m_interval.call_args.args[1]()
+        fake_gc.get_freeze_count.assert_called_once()
+
+
 async def test_install_reload_freezes_immediately_no_delay(hass):
     entry = _entry(hass)
     fake_gc, _change, m_cl, _started = await _setup(hass, entry, running=True)

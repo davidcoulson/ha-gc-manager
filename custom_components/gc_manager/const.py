@@ -120,3 +120,7 @@ def refreeze_min_gap(interval_hours: int) -> timedelta:
     previous freeze than to the next scheduled one is skipped (e.g. one landing
     just after the off-grid startup freeze)."""
     return timedelta(hours=round_refreeze_interval(interval_hours) / 2)
+
+
+# The sensors fed by the (costly) frozen/tracked object sample.
+COUNT_SENSOR_KEYS: tuple[str, ...] = ("frozen_objects", "tracked_objects")
