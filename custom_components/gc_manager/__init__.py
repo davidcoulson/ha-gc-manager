@@ -19,6 +19,7 @@ from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CoreState, HomeAssistant, ServiceCall, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_time_change,
@@ -36,6 +37,7 @@ from .const import (
     CONF_THRESHOLD_GEN0,
     CONF_THRESHOLD_GEN1,
     CONF_THRESHOLD_GEN2,
+    COUNT_SENSOR_KEYS,
     DEFAULT_DAILY_MAINTENANCE,
     DEFAULT_DAILY_TIME,
     DEFAULT_FREEZE_ON_START,
@@ -171,7 +173,28 @@ def _arm_entry(
         )
 
     # ── off-loop sampling of the frozen + tracked object counts ────────────
+    # Off the loop is not free: both walks hold the GIL for their whole length
+    # (~0.3 s for gc.get_freeze_count() with ~3.5 M frozen objects on Python
+    # 3.14), so the event loop stalls while they run all the same. The counts
+    # feed only the two count sensors, so while both are disabled there is
+    # nothing to sample for.
+    @callback
+    def _counts_wanted() -> bool:
+        registry = er.async_get(hass)
+        for key in COUNT_SENSOR_KEYS:
+            entity_id = registry.async_get_entity_id(
+                "sensor", DOMAIN, f"{entry.entry_id}_{key}"
+            )
+            if entity_id is None:
+                return True  # not registered yet (first start): sample
+            reg_entry = registry.async_get(entity_id)
+            if reg_entry is not None and reg_entry.disabled_by is None:
+                return True
+        return False
+
     async def _sample_counts(_now=None) -> None:
+        if not _counts_wanted():
+            return
         await controller.async_refresh_counts()
 
     data.unsubs.append(
