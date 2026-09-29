@@ -37,8 +37,9 @@ class GcResult:
 
     action: str
     collected: int
-    frozen_before: int
-    frozen_after: int
+    # None when the frozen set was not counted (see GcController.count_frozen).
+    frozen_before: int | None
+    frozen_after: int | None
     duration_ms: float
     at: datetime
 
@@ -58,6 +59,13 @@ class GcController:
         self._log = logger
         self._lock = asyncio.Lock()
         self.last_result: GcResult | None = None
+        # gc.get_freeze_count() walks the whole frozen set holding the GIL
+        # (~0.3 s at 3.5 M objects), and every freeze operation called it twice
+        # just to report a delta. Asked before each operation; when it says no
+        # the counts are skipped and the delta reads unknown.
+        self.count_frozen: Callable[[], bool] = lambda: True
+        self.light_freezes = 0
+        self.last_light_freeze_ms: float | None = None
         self.last_freeze_at: datetime | None = None  # last op that ended in freeze()
         # Object counts sampled off the loop — gc.get_freeze_count() walks the
         # permanent set and len(gc.get_objects()) the tracked set, both O(heap),
@@ -135,6 +143,41 @@ class GcController:
         peak = self.peak_pause_ms
         self.peak_pause_ms = elapsed if peak is None else max(peak, elapsed)
 
+    def _frozen_count(self, counting: bool) -> int | None:
+        return gc.get_freeze_count() if counting else None
+
+    async def async_light_freeze(self) -> float | None:
+        """Young collection then freeze(): keep the unfrozen set small.
+
+        collect(1) sweeps only the two young generations (a few thousand
+        objects, milliseconds) so fresh garbage is not frozen; freeze() then
+        moves every survivor out of the collector's reach. The next full
+        collection has only what was created since to scan. Cycles that die
+        AFTER being frozen wait for the daily maintenance, as with any freeze.
+
+        Skipped while a compound operation holds the lock. Does not count as
+        a freeze for the periodic re-freeze's debounce, and leaves the last
+        action sensors alone: it runs far too often to be news.
+        """
+        if self._lock.locked():
+            return None
+        async with self._lock:
+
+            def _do() -> float:
+                start = time.perf_counter()
+                self._collecting_tid = threading.get_ident()
+                try:
+                    gc.collect(1)
+                finally:
+                    self._collecting_tid = None
+                gc.freeze()
+                return (time.perf_counter() - start) * 1000.0
+
+            took = await self._hass.async_add_executor_job(_do)
+            self.light_freezes += 1
+            self.last_light_freeze_ms = took
+            return took
+
     async def async_collect_and_freeze(self, action: str) -> GcResult:
         """collect() then freeze() — absorb current survivors into the frozen set.
 
@@ -177,14 +220,15 @@ class GcController:
         async with self._lock:
 
             def _do() -> GcResult:
-                before = gc.get_freeze_count()
+                counting = self.count_frozen()
+                before = self._frozen_count(counting)
                 start = time.perf_counter()
                 gc.unfreeze()
                 return GcResult(
                     action="unfreeze",
                     collected=0,
                     frozen_before=before,
-                    frozen_after=gc.get_freeze_count(),
+                    frozen_after=self._frozen_count(counting),
                     duration_ms=(time.perf_counter() - start) * 1000.0,
                     at=dt_util.utcnow(),
                 )
@@ -209,7 +253,8 @@ class GcController:
         """collect()+freeze() body — caller must hold ``self._lock``."""
 
         def _do() -> GcResult:
-            before = gc.get_freeze_count()
+            counting = self.count_frozen()
+            before = self._frozen_count(counting)
             start = time.perf_counter()
             self._collecting_tid = threading.get_ident()
             try:
@@ -221,7 +266,7 @@ class GcController:
                 action=action,
                 collected=collected,
                 frozen_before=before,
-                frozen_after=gc.get_freeze_count(),
+                frozen_after=self._frozen_count(counting),
                 duration_ms=(time.perf_counter() - start) * 1000.0,
                 at=dt_util.utcnow(),
             )
@@ -235,7 +280,8 @@ class GcController:
         """unfreeze()+collect()+freeze() body — caller must hold ``self._lock``."""
 
         def _do() -> GcResult:
-            before = gc.get_freeze_count()
+            counting = self.count_frozen()
+            before = self._frozen_count(counting)
             start = time.perf_counter()
             gc.unfreeze()
             self._collecting_tid = threading.get_ident()
@@ -248,7 +294,7 @@ class GcController:
                 action="daily maintenance (unfreeze+collect+freeze)",
                 collected=collected,
                 frozen_before=before,
-                frozen_after=gc.get_freeze_count(),
+                frozen_after=self._frozen_count(counting),
                 duration_ms=(time.perf_counter() - start) * 1000.0,
                 at=dt_util.utcnow(),
             )
@@ -261,11 +307,11 @@ class GcController:
     def _record(self, result: GcResult) -> GcResult:
         self.last_result = result
         self._log.info(
-            "%s: collected=%d, frozen %d->%d, took %.0fms",
+            "%s: collected=%d, frozen %s->%s, took %.0fms",
             result.action,
             result.collected,
-            result.frozen_before,
-            result.frozen_after,
+            "?" if result.frozen_before is None else result.frozen_before,
+            "?" if result.frozen_after is None else result.frozen_after,
             result.duration_ms,
         )
         return result

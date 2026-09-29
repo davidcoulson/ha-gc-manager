@@ -289,6 +289,48 @@ async def test_count_sampler_skips_while_both_count_sensors_are_disabled(hass):
         fake_gc.get_freeze_count.assert_called_once()
 
 
+async def test_light_freeze_is_scheduled_and_waits_for_the_first_freeze(hass):
+    """With light_freeze_seconds set, a light freeze runs on that interval -
+    but never before the heap has had its first real freeze."""
+    from datetime import timedelta
+
+    entry = _entry(hass, freeze_on_start=False, light_freeze_seconds=60)
+    fake_gc = _fake_gc()
+    hass.set_state(CoreState.running)
+    p_gc, p_change, p_interval, p_cl, p_started, p_fwd = _patches(fake_gc, hass)
+    with p_gc, p_change, p_interval as m_interval, p_cl, p_started, p_fwd:
+        assert await async_setup_entry(hass, entry)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        ticks = [
+            c for c in m_interval.call_args_list if c.args[2] == timedelta(seconds=60)
+        ]
+        assert len(ticks) == 1
+        controller = hass.data[DOMAIN][entry.entry_id].controller
+        await ticks[0].args[1](None)
+        fake_gc.freeze.assert_not_called()  # nothing frozen yet: wait
+        await controller.async_collect_and_freeze("startup freeze")
+        fake_gc.freeze.reset_mock()
+        await ticks[0].args[1](None)
+        fake_gc.collect.assert_called_with(1)
+        fake_gc.freeze.assert_called_once()
+
+
+async def test_light_freeze_is_off_by_default(hass):
+    from datetime import timedelta
+
+    entry = _entry(hass, freeze_on_start=False)
+    fake_gc = _fake_gc()
+    hass.set_state(CoreState.running)
+    p_gc, p_change, p_interval, p_cl, p_started, p_fwd = _patches(fake_gc, hass)
+    with p_gc, p_change, p_interval as m_interval, p_cl, p_started, p_fwd:
+        assert await async_setup_entry(hass, entry)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert all(
+            c.args[2] != timedelta(seconds=60) for c in m_interval.call_args_list
+        )
+        assert len(m_interval.call_args_list) == 1  # only the count sampler
+
+
 async def test_install_reload_freezes_immediately_no_delay(hass):
     entry = _entry(hass)
     fake_gc, _change, m_cl, _started = await _setup(hass, entry, running=True)

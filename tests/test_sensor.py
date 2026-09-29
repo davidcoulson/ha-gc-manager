@@ -34,13 +34,15 @@ def _fake_controller():
         last_pause_at=_AT,
         peak_pause_ms=97.3,
         last_result=result,
+        light_freezes=7,
+        last_light_freeze_ms=3.4,
     )
 
 
 def test_description_set_is_complete():
     keys = {d.key for d in DESCRIPTIONS}
-    # 11 singletons + 5 series × 3 generations
-    assert len(DESCRIPTIONS) == 11 + 5 * 3
+    # 13 singletons (two for the light freeze) + 5 series × 3 generations
+    assert len(DESCRIPTIONS) == 13 + 5 * 3
     assert {"frozen_objects", "tracked_objects", "last_pause", "peak_pause"} <= keys
     assert {
         "last_pause_time",
@@ -129,3 +131,16 @@ def test_per_generation_values_read_gc():
         assert by_key["collections_gen2"].native_value == 5
         assert by_key["collected_gen1"].native_value == 500
         assert by_key["uncollectable_gen2"].native_value == 1
+
+
+def test_frozen_delta_is_unknown_when_the_counts_were_skipped():
+    """A freeze that skipped the (costly) frozen-set counts has no delta."""
+    desc = next(d for d in DESCRIPTIONS if d.key == "last_action_frozen_delta")
+    skipped = SimpleNamespace(
+        last_result=SimpleNamespace(frozen_before=None, frozen_after=None)
+    )
+    assert desc.value_fn(skipped) is None
+    counted = SimpleNamespace(
+        last_result=SimpleNamespace(frozen_before=100, frozen_after=350)
+    )
+    assert desc.value_fn(counted) == 250

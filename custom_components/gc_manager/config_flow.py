@@ -18,6 +18,7 @@ from .const import (
     CONF_DAILY_MAINTENANCE,
     CONF_DAILY_TIME,
     CONF_FREEZE_ON_START,
+    CONF_LIGHT_FREEZE_SECONDS,
     CONF_REFREEZE_INTERVAL_HOURS,
     CONF_SET_THRESHOLDS,
     CONF_STARTUP_DELAY_SECONDS,
@@ -27,6 +28,7 @@ from .const import (
     DEFAULT_DAILY_MAINTENANCE,
     DEFAULT_DAILY_TIME,
     DEFAULT_FREEZE_ON_START,
+    DEFAULT_LIGHT_FREEZE_SECONDS,
     DEFAULT_NAME,
     DEFAULT_REFREEZE_INTERVAL_HOURS,
     DEFAULT_SET_THRESHOLDS,
@@ -35,8 +37,10 @@ from .const import (
     DEFAULT_THRESHOLD_GEN1,
     DEFAULT_THRESHOLD_GEN2,
     DOMAIN,
+    MAX_LIGHT_FREEZE_SECONDS,
     MAX_REFREEZE_INTERVAL_HOURS,
     MAX_STARTUP_DELAY_SECONDS,
+    MIN_LIGHT_FREEZE_SECONDS,
     MIN_REFREEZE_INTERVAL_HOURS,
     MIN_STARTUP_DELAY_SECONDS,
     UNIQUE_ID,
@@ -82,6 +86,20 @@ def _build_schema(source: Mapping[str, Any]) -> vol.Schema:
                     step=1,
                     mode=selector.NumberSelectorMode.BOX,
                     unit_of_measurement="h",
+                )
+            ),
+            vol.Required(
+                CONF_LIGHT_FREEZE_SECONDS,
+                default=source.get(
+                    CONF_LIGHT_FREEZE_SECONDS, DEFAULT_LIGHT_FREEZE_SECONDS
+                ),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=MIN_LIGHT_FREEZE_SECONDS,
+                    max=MAX_LIGHT_FREEZE_SECONDS,
+                    step=1,
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="s",
                 )
             ),
             vol.Required(

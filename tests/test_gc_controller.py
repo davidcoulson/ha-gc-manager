@@ -269,3 +269,47 @@ async def test_lock_serializes_compound_ops(hass):
             controller.async_maintenance(), controller.async_maintenance()
         )
     assert order == ["unfreeze", "collect", "freeze", "unfreeze", "collect", "freeze"]
+
+
+async def test_freeze_skips_the_frozen_set_counts_when_nothing_shows_them(hass):
+    """get_freeze_count walks the whole frozen set holding the GIL; a freeze
+    only pays for it while a sensor is enabled to show the result."""
+    g = _const_gc()
+    with patch("custom_components.gc_manager.gc_controller.gc", g):
+        controller = GcController(hass, _LOG)
+        controller.count_frozen = lambda: False
+        result = await controller.async_collect_and_freeze("periodic re-freeze")
+        g.get_freeze_count.assert_not_called()
+        assert (result.frozen_before, result.frozen_after) == (None, None)
+        g.collect.assert_called_once_with()
+        g.freeze.assert_called_once()
+        result = await controller.async_maintenance()
+        g.get_freeze_count.assert_not_called()
+        assert result.frozen_after is None
+
+
+async def test_light_freeze_collects_only_the_young_generations_then_freezes(hass):
+    g = _const_gc()
+    with patch("custom_components.gc_manager.gc_controller.gc", g):
+        controller = GcController(hass, _LOG)
+        took = await controller.async_light_freeze()
+        assert took is not None and took >= 0
+        assert [
+            c[0]
+            for c in g.method_calls
+            if c[0] in ("collect", "freeze", "get_freeze_count", "unfreeze")
+        ] == ["collect", "freeze"]
+        g.collect.assert_called_once_with(1)
+        assert controller.light_freezes == 1 and controller.last_light_freeze_ms == took
+        # not a freeze for the re-freeze debounce, and not news for the action sensors
+        assert controller.last_freeze_at is None and controller.last_result is None
+
+
+async def test_light_freeze_steps_aside_for_a_compound_operation(hass):
+    g = _const_gc()
+    with patch("custom_components.gc_manager.gc_controller.gc", g):
+        controller = GcController(hass, _LOG)
+        async with controller._lock:
+            assert await controller.async_light_freeze() is None
+        g.freeze.assert_not_called()
+        assert controller.light_freezes == 0

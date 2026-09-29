@@ -36,6 +36,14 @@ MAX_STARTUP_DELAY_SECONDS: Final = 3600
 # of 24 and aligned to a wall-clock grid phased off the maintenance time (see
 # refreeze_slots) so runs stay evenly spaced regardless of when HA started.
 CONF_REFREEZE_INTERVAL_HOURS: Final = "refreeze_interval_hours"
+# Light freeze: a young collection then freeze(), every few seconds-to-minutes.
+# A full collection scans every object created since the last freeze, and a busy
+# instance creates hundreds of thousands within minutes of one, so an hourly
+# re-freeze barely shortens the everyday pause. 0 = off.
+CONF_LIGHT_FREEZE_SECONDS: Final = "light_freeze_seconds"
+DEFAULT_LIGHT_FREEZE_SECONDS: Final = 0
+MIN_LIGHT_FREEZE_SECONDS: Final = 0
+MAX_LIGHT_FREEZE_SECONDS: Final = 3600
 DEFAULT_REFREEZE_INTERVAL_HOURS: Final = 6
 MIN_REFREEZE_INTERVAL_HOURS: Final = 0
 MAX_REFREEZE_INTERVAL_HOURS: Final = 24
@@ -114,3 +122,8 @@ def refreeze_min_gap(interval_hours: int) -> timedelta:
 
 # The sensors fed by the (costly) frozen/tracked object sample.
 COUNT_SENSOR_KEYS: tuple[str, ...] = ("frozen_objects", "tracked_objects")
+# The sensors that need the frozen set counted inside each freeze operation.
+FROZEN_COUNT_SENSOR_KEYS: tuple[str, ...] = (
+    "frozen_objects",
+    "last_action_frozen_delta",
+)

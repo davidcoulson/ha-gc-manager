@@ -31,6 +31,7 @@ from .const import (
     CONF_DAILY_MAINTENANCE,
     CONF_DAILY_TIME,
     CONF_FREEZE_ON_START,
+    CONF_LIGHT_FREEZE_SECONDS,
     CONF_REFREEZE_INTERVAL_HOURS,
     CONF_SET_THRESHOLDS,
     CONF_STARTUP_DELAY_SECONDS,
@@ -41,6 +42,7 @@ from .const import (
     DEFAULT_DAILY_MAINTENANCE,
     DEFAULT_DAILY_TIME,
     DEFAULT_FREEZE_ON_START,
+    DEFAULT_LIGHT_FREEZE_SECONDS,
     DEFAULT_REFREEZE_INTERVAL_HOURS,
     DEFAULT_SET_THRESHOLDS,
     DEFAULT_STARTUP_DELAY_SECONDS,
@@ -48,6 +50,7 @@ from .const import (
     DEFAULT_THRESHOLD_GEN1,
     DEFAULT_THRESHOLD_GEN2,
     DOMAIN,
+    FROZEN_COUNT_SENSOR_KEYS,
     PLATFORMS,
     SERVICE_FREEZE,
     SERVICE_MAINTAIN,
@@ -179,9 +182,9 @@ def _arm_entry(
     # feed only the two count sensors, so while both are disabled there is
     # nothing to sample for.
     @callback
-    def _counts_wanted() -> bool:
+    def _any_enabled(keys: tuple[str, ...]) -> bool:
         registry = er.async_get(hass)
-        for key in COUNT_SENSOR_KEYS:
+        for key in keys:
             entity_id = registry.async_get_entity_id(
                 "sensor", DOMAIN, f"{entry.entry_id}_{key}"
             )
@@ -193,9 +196,32 @@ def _arm_entry(
         return False
 
     async def _sample_counts(_now=None) -> None:
-        if not _counts_wanted():
+        if not _any_enabled(COUNT_SENSOR_KEYS):
             return
         await controller.async_refresh_counts()
+
+    # Each freeze operation counts the frozen set only while a sensor shows it.
+    controller.count_frozen = lambda: _any_enabled(FROZEN_COUNT_SENSOR_KEYS)
+
+    # ── light freeze (young collection + freeze, every N seconds) ──────────
+    light_seconds = int(
+        source.get(CONF_LIGHT_FREEZE_SECONDS, DEFAULT_LIGHT_FREEZE_SECONDS)
+    )
+    if light_seconds > 0:
+
+        async def _light_freeze(_now) -> None:
+            # Only once the heap has had its first real freeze: before that
+            # the startup transients would be frozen in with everything else.
+            if controller.last_freeze_at is None:
+                return
+            await controller.async_light_freeze()
+
+        data.unsubs.append(
+            async_track_time_interval(
+                hass, _light_freeze, timedelta(seconds=light_seconds)
+            )
+        )
+        _LOGGER.info("light freeze every %ds", light_seconds)
 
     data.unsubs.append(
         async_track_time_interval(hass, _sample_counts, _TRACKED_SAMPLE_INTERVAL)

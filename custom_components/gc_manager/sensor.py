@@ -136,11 +136,30 @@ _SINGLETON: tuple[GcSensorDescription, ...] = (
         icon="mdi:snowflake-variant",
         native_unit_of_measurement=_OBJECTS,
         state_class=SensorStateClass.MEASUREMENT,
+        # Unknown when the operation skipped the (costly) frozen-set counts.
         value_fn=lambda c: (
             c.last_result.frozen_after - c.last_result.frozen_before
             if c.last_result
+            and c.last_result.frozen_after is not None
+            and c.last_result.frozen_before is not None
             else None
         ),
+    ),
+    GcSensorDescription(
+        key="light_freezes",
+        name="Light freezes",
+        icon="mdi:snowflake-melt",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda c: c.light_freezes,
+    ),
+    GcSensorDescription(
+        key="last_light_freeze_duration",
+        name="Last light freeze duration",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.MILLISECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        value_fn=lambda c: c.last_light_freeze_ms,
     ),
 )
 
