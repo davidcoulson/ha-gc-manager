@@ -11,7 +11,6 @@ from homeassistant.core import CoreState
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.gc_manager import (
-    _TRACKED_SAMPLE_INTERVAL,
     _parse_hms,
     async_remove_entry,
     async_setup_entry,
@@ -21,6 +20,7 @@ from custom_components.gc_manager.const import (
     CONF_DAILY_MAINTENANCE,
     CONF_FREEZE_ON_START,
     CONF_REFREEZE_INTERVAL_HOURS,
+    CONF_SAMPLE_INTERVAL_MINUTES,
     CONF_SET_THRESHOLDS,
     CONF_STARTUP_DELAY_SECONDS,
     CONF_THRESHOLD_GEN0,
@@ -236,9 +236,9 @@ async def test_unload_restores_overridden_thresholds(hass):
         fake_gc.set_threshold.assert_called_once_with(2000, 10, 10)  # reverted
 
 
-async def test_count_sampler_wired_and_runs_initial_sample(hass):
-    """The frozen+tracked count sampler is scheduled at _TRACKED_SAMPLE_INTERVAL
-    and its initial background run populates the controller's cached counts."""
+async def test_count_sampler_wired_at_default_interval_and_runs_initial_sample(hass):
+    """The frozen+tracked count sampler is scheduled at the default sample
+    interval (5 min) and its initial background run populates the counts."""
     entry = _entry(hass, freeze_on_start=False)
     fake_gc = _fake_gc()
     fake_gc.get_freeze_count.return_value = 1234
@@ -248,7 +248,7 @@ async def test_count_sampler_wired_and_runs_initial_sample(hass):
     with p_gc, p_change, p_interval as m_interval, p_cl, p_started, p_fwd:
         assert await async_setup_entry(hass, entry)
         await hass.async_block_till_done(wait_background_tasks=True)
-        assert m_interval.call_args.args[2] == _TRACKED_SAMPLE_INTERVAL
+        assert m_interval.call_args.args[2] == timedelta(minutes=5)
         controller = hass.data[DOMAIN][entry.entry_id].controller
         assert controller.frozen_count == 1234  # initial sample ran off the loop
         assert controller.tracked_count == 3
@@ -336,6 +336,18 @@ async def test_automatic_gc_is_left_alone_by_default_and_on_a_reload(hass):
             fake_gc.disable.assert_not_called()
         hass.data.pop(DOMAIN, None)
         await hass.config_entries.async_remove(entry.entry_id)
+
+
+async def test_count_sampler_honors_configured_interval(hass):
+    """A user-supplied sample_interval_minutes replaces the 5-min default."""
+    entry = _entry(hass, freeze_on_start=False, **{CONF_SAMPLE_INTERVAL_MINUTES: 15})
+    fake_gc = _fake_gc()
+    hass.set_state(CoreState.running)
+    p_gc, p_change, p_interval, p_cl, p_started, p_fwd = _patches(fake_gc, hass)
+    with p_gc, p_change, p_interval as m_interval, p_cl, p_started, p_fwd:
+        assert await async_setup_entry(hass, entry)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert m_interval.call_args.args[2] == timedelta(minutes=15)
 
 
 async def test_count_sampler_skips_while_both_count_sensors_are_disabled(hass):

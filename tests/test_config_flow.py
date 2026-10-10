@@ -13,6 +13,7 @@ from custom_components.gc_manager.const import (
     CONF_DAILY_TIME,
     CONF_FREEZE_ON_START,
     CONF_REFREEZE_INTERVAL_HOURS,
+    CONF_SAMPLE_INTERVAL_MINUTES,
     CONF_SET_THRESHOLDS,
     CONF_STARTUP_DELAY_SECONDS,
     CONF_THRESHOLD_GEN0,
@@ -24,6 +25,7 @@ from custom_components.gc_manager.const import (
 _INPUT = {
     CONF_FREEZE_ON_START: True,
     CONF_STARTUP_DELAY_SECONDS: 120,
+    CONF_SAMPLE_INTERVAL_MINUTES: 5,
     CONF_REFREEZE_INTERVAL_HOURS: 6,
     "pause_gc_until_freeze": False,
     CONF_DAILY_MAINTENANCE: True,
