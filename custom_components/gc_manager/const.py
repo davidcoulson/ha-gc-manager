@@ -31,6 +31,13 @@ DEFAULT_STARTUP_DELAY_SECONDS: Final = 120
 MIN_STARTUP_DELAY_SECONDS: Final = 0
 MAX_STARTUP_DELAY_SECONDS: Final = 3600
 
+# Period of the frozen/tracked count sampler; a longer interval spreads the
+# per-tick heap-walk GIL hitch out on large instances.
+CONF_SAMPLE_INTERVAL_MINUTES: Final = "sample_interval_minutes"
+DEFAULT_SAMPLE_INTERVAL_MINUTES: Final = 5
+MIN_SAMPLE_INTERVAL_MINUTES: Final = 1
+MAX_SAMPLE_INTERVAL_MINUTES: Final = 60
+
 # Periodic collect()+freeze() to re-absorb objects accumulated since the startup
 # freeze, holding the gen-2 pause near its floor. 0 = off. Rounded to a divisor
 # of 24 and aligned to a wall-clock grid phased off the maintenance time (see

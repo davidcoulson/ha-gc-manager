@@ -20,6 +20,7 @@ from .const import (
     CONF_FREEZE_ON_START,
     CONF_PAUSE_GC_UNTIL_FREEZE,
     CONF_REFREEZE_INTERVAL_HOURS,
+    CONF_SAMPLE_INTERVAL_MINUTES,
     CONF_SET_THRESHOLDS,
     CONF_STARTUP_DELAY_SECONDS,
     CONF_THRESHOLD_GEN0,
@@ -31,6 +32,7 @@ from .const import (
     DEFAULT_NAME,
     DEFAULT_PAUSE_GC_UNTIL_FREEZE,
     DEFAULT_REFREEZE_INTERVAL_HOURS,
+    DEFAULT_SAMPLE_INTERVAL_MINUTES,
     DEFAULT_SET_THRESHOLDS,
     DEFAULT_STARTUP_DELAY_SECONDS,
     DEFAULT_THRESHOLD_GEN0,
@@ -38,8 +40,10 @@ from .const import (
     DEFAULT_THRESHOLD_GEN2,
     DOMAIN,
     MAX_REFREEZE_INTERVAL_HOURS,
+    MAX_SAMPLE_INTERVAL_MINUTES,
     MAX_STARTUP_DELAY_SECONDS,
     MIN_REFREEZE_INTERVAL_HOURS,
+    MIN_SAMPLE_INTERVAL_MINUTES,
     MIN_STARTUP_DELAY_SECONDS,
     UNIQUE_ID,
 )
@@ -78,6 +82,20 @@ def _build_schema(source: Mapping[str, Any]) -> vol.Schema:
                     CONF_PAUSE_GC_UNTIL_FREEZE, DEFAULT_PAUSE_GC_UNTIL_FREEZE
                 ),
             ): selector.BooleanSelector(),
+            vol.Required(
+                CONF_SAMPLE_INTERVAL_MINUTES,
+                default=source.get(
+                    CONF_SAMPLE_INTERVAL_MINUTES, DEFAULT_SAMPLE_INTERVAL_MINUTES
+                ),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=MIN_SAMPLE_INTERVAL_MINUTES,
+                    max=MAX_SAMPLE_INTERVAL_MINUTES,
+                    step=1,
+                    mode=selector.NumberSelectorMode.BOX,
+                    unit_of_measurement="min",
+                )
+            ),
             vol.Required(
                 CONF_REFREEZE_INTERVAL_HOURS,
                 default=source.get(
