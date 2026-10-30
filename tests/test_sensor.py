@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 from homeassistant.helpers.typing import UNDEFINED
 
 from custom_components.gc_manager.const import DOMAIN
+from custom_components.gc_manager.gc_controller import GcController
 from custom_components.gc_manager.sensor import (
     DESCRIPTIONS,
     GcSensor,
@@ -38,6 +39,7 @@ def _fake_controller():
         last_result=result,
         pause_count=12,
         pause_total_ms=2345.67,
+        async_add_listener=MagicMock(return_value=lambda: None),
     )
 
 
@@ -154,3 +156,25 @@ def test_every_sensor_name_is_translated():
         assert d.name is UNDEFINED, d.key  # names come from translations, not code
         assert d.translation_key == d.key
         assert names[d.key]["name"], d.key
+
+
+async def test_sensor_state_is_pushed_when_an_op_lands(hass):
+    """An op-dependent sensor must not lag the op by a poll interval."""
+    g = MagicMock()
+    g.get_freeze_count.return_value = 5000
+    g.collect.return_value = 1
+    g.get_threshold.return_value = (2000, 10, 10)
+    with patch("custom_components.gc_manager.gc_controller.gc", g):
+        controller = GcController(hass, MagicMock())
+        desc = next(d for d in DESCRIPTIONS if d.key == "last_action")
+        sensor = GcSensor("gcm", controller, desc)
+        sensor.hass = hass
+        sensor.entity_id = "sensor.gc_manager_last_gc_action"
+        with patch.object(sensor, "async_write_ha_state") as write:
+            await sensor.async_added_to_hass()
+            await controller.async_collect_and_freeze("startup freeze")
+            write.assert_called_once()
+            assert sensor.native_value == "startup freeze"
+            await sensor.async_remove()
+            await controller.async_unfreeze()
+            write.assert_called_once()  # unsubscribed on removal
