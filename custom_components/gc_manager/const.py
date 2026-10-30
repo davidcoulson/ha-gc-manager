@@ -54,6 +54,14 @@ DEFAULT_PAUSE_GC_UNTIL_FREEZE: Final = False
 # startup that never reaches its freeze cannot leave it off.
 PAUSE_GC_WATCHDOG_SECONDS: Final = 900
 DEFAULT_REFREEZE_INTERVAL_HOURS: Final = 6
+# Adaptive re-freeze: a periodic slot re-freezes only once an automatic gen-2
+# pause since the last freeze reached this many ms, so the forced collect (it
+# holds the GIL) is paid only when the unfrozen heap has grown enough to hurt.
+# 0 = re-freeze on every slot. Not applied to the full-maintenance substitute
+# used when daily maintenance is off, which exists to bound memory, not pauses.
+CONF_REFREEZE_PAUSE_MS: Final = "refreeze_pause_ms"
+DEFAULT_REFREEZE_PAUSE_MS: Final = 0
+MAX_REFREEZE_PAUSE_MS: Final = 10_000
 MIN_REFREEZE_INTERVAL_HOURS: Final = 0
 MAX_REFREEZE_INTERVAL_HOURS: Final = 24
 

@@ -27,6 +27,12 @@ keeps it effective over time.
   the startup freeze and the pause slowly creeps back up. A periodic
   `collect()` + `freeze()` re-absorbs them, holding the pause near its floor.
   Cheap, but frozen-then-dead objects are not reclaimed until maintenance.
+  The forced `collect()` holds the GIL, so with a *re-freeze pause target*
+  set (ms) each slot re-freezes only once an automatic gen-2 pause since the
+  last freeze has reached that target — the cost is paid when the unfrozen
+  heap has actually grown enough to hurt, not on a clock. 0 (default)
+  re-freezes on every slot; the target is ignored when daily maintenance is
+  off, because the periodic pass is then the full reset that bounds memory.
 - **Daily maintenance** (optional) — once a day, `unfreeze()` + `collect()` +
   `freeze()`: a full reset that reclaims anything frozen earlier that has since
   become garbage (the small leak the cheap re-freeze leaves), then re-freezes
