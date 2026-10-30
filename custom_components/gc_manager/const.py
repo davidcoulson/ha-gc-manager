@@ -95,13 +95,6 @@ DEFAULT_THRESHOLD_GEN0: Final = _HASS_DEFAULT_THRESHOLDS[0]
 DEFAULT_THRESHOLD_GEN1: Final = _HASS_DEFAULT_THRESHOLDS[1]
 DEFAULT_THRESHOLD_GEN2: Final = _HASS_DEFAULT_THRESHOLDS[2]
 
-# While the heap is frozen, CPython's gen-2 trigger ("pending long-lived objects
-# > 25% of the long-lived total") fires on nearly every gen-1 pass, because the
-# frozen objects no longer count toward that total — measured as a full
-# collection every ~85 s on a 13k-entity instance. Raising threshold2 while
-# frozen (restored on unfreeze) keeps gen-2 rare again.
-FROZEN_GEN2_THRESHOLD: Final = 1000
-
 # Fired on the HA bus after every GC operation, with the GcResult fields.
 EVENT_GC_OPERATION: Final = f"{DOMAIN}_operation"
 

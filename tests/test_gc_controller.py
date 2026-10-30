@@ -14,7 +14,7 @@ import pytest
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_capture_events
 
-from custom_components.gc_manager.const import EVENT_GC_OPERATION, FROZEN_GEN2_THRESHOLD
+from custom_components.gc_manager.const import EVENT_GC_OPERATION
 from custom_components.gc_manager.gc_controller import GcController
 
 _LOG = logging.getLogger("test")
@@ -50,8 +50,6 @@ async def test_collect_and_freeze_runs_collect_then_freeze(hass):
         "get_freeze_count",
         "collect",
         "freeze",
-        "get_threshold",
-        "set_threshold",  # gen-2 threshold raised while frozen
         "get_freeze_count",
     ]
     assert result.action == "startup freeze"
@@ -72,8 +70,6 @@ async def test_maintenance_unfreezes_then_collects_then_freezes(hass):
         "unfreeze",
         "collect",
         "freeze",
-        "get_threshold",
-        "set_threshold",  # gen-2 threshold raised while frozen
         "get_freeze_count",
     ]
     assert "unfreeze+collect+freeze" in result.action
@@ -295,36 +291,6 @@ def test_gen2_pauses_are_counted_and_added_up(hass):
             controller.pause_total_ms >= 0
             and controller.pause_total_ms == pytest.approx(controller.pause_total_ms)
         )
-
-
-async def test_freeze_raises_gen2_threshold_and_unfreeze_restores_it(hass):
-    """A frozen heap trips CPython's gen-2 "25% pending" guard on nearly every
-    gen-1 pass, so threshold2 is raised while frozen and put back on unfreeze."""
-    g = _const_gc()
-    with patch("custom_components.gc_manager.gc_controller.gc", g):
-        controller = GcController(hass, _LOG)
-        await controller.async_collect_and_freeze("startup freeze")
-        g.set_threshold.assert_called_once_with(2000, 10, FROZEN_GEN2_THRESHOLD)
-        g.get_threshold.return_value = (2000, 10, FROZEN_GEN2_THRESHOLD)
-        await controller.async_maintenance()  # re-freeze: already raised, no-op
-        g.set_threshold.assert_called_once()
-        await controller.async_unfreeze()
-        g.set_threshold.assert_called_with(2000, 10, 10)  # the pre-freeze value
-
-
-async def test_restore_thresholds_also_undoes_the_gen2_raise(hass):
-    g = _const_gc()
-    g.callbacks = []
-    with patch("custom_components.gc_manager.gc_controller.gc", g):
-        controller = GcController(hass, _LOG)
-        controller.start()  # captures (2000, 10, 10)
-        controller.set_thresholds(5000, 20, 20)
-        g.get_threshold.return_value = (5000, 20, 20)
-        await controller.async_collect_and_freeze("startup freeze")
-        g.set_threshold.reset_mock()
-        controller.restore_thresholds()
-        controller.restore_gen2_threshold()  # nothing left to undo
-        g.set_threshold.assert_called_once_with(2000, 10, 10)
 
 
 @pytest.mark.parametrize("operation", ["freeze", "maintenance", "unfreeze"])

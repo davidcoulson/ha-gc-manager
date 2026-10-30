@@ -38,12 +38,6 @@ keeps it effective over time.
   become garbage (the small leak the cheap re-freeze leaves), then re-freezes
   the current live set. (When daily maintenance is off, the periodic pass does
   this full reset instead, so that leak can't accumulate.)
-- **Gen-2 threshold raised while frozen** (automatic) — CPython only runs a full
-  collection when the objects pending promotion exceed 25% of the long-lived
-  total, and a frozen heap drops out of that total, so once frozen the guard
-  passes on nearly every gen-1 pass (a full collection every ~85 s on a
-  13k-entity instance). After each freeze the gen-2 threshold is raised to 1000
-  and put back on unfreeze or unload.
 - **GC threshold override** (optional) — raise CPython's `gc.set_threshold()`
   values so collections run less often; off by default, restored on unload.
 
