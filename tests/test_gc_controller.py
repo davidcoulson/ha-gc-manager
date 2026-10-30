@@ -12,8 +12,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import async_capture_events
 
-from custom_components.gc_manager.const import FROZEN_GEN2_THRESHOLD
+from custom_components.gc_manager.const import EVENT_GC_OPERATION, FROZEN_GEN2_THRESHOLD
 from custom_components.gc_manager.gc_controller import GcController
 
 _LOG = logging.getLogger("test")
@@ -451,3 +452,21 @@ async def test_listeners_fire_after_ops_count_refresh_and_pause_toggle(hass):
         remove()
         await controller.async_unfreeze()
         assert seen.call_count == 4
+
+
+async def test_every_operation_fires_an_event_with_its_result(hass):
+    """Automations can react to a slow freeze without polling the sensors."""
+    g = _const_gc()
+    events = async_capture_events(hass, EVENT_GC_OPERATION)
+    with patch("custom_components.gc_manager.gc_controller.gc", g):
+        controller = GcController(hass, _LOG)
+        result = await controller.async_collect_and_freeze("startup freeze")
+        await controller.async_unfreeze()
+    await hass.async_block_till_done()
+    assert [e.data["action"] for e in events] == ["startup freeze", "unfreeze"]
+    first = events[0].data
+    assert first["collected"] == 1
+    assert first["frozen_before"] == 5000
+    assert first["frozen_after"] == 5000
+    assert first["duration_ms"] == result.duration_ms
+    assert first["at"] == result.at.isoformat()

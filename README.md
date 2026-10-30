@@ -59,6 +59,12 @@ heap), the gen-2 pause (last and peak since the last freeze),
 the last operation and how much it reclaimed, and per-generation gc
 counts/thresholds/stats; a binary sensor reports whether automatic gc is on.
 
+Every operation also fires a `gc_manager_operation` event on the bus carrying
+the action, objects collected, frozen counts before and after, duration in ms
+and timestamp, so an automation can react to a slow freeze without polling.
+The integration's **Download diagnostics** includes the options in effect, the
+interpreter's gc thresholds and stats, and the controller's cached telemetry.
+
 ## Caveats
 
 - Each operation holds the GIL while the collection runs, so it briefly pauses
