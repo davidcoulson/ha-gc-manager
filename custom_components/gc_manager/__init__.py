@@ -33,6 +33,7 @@ from .const import (
     CONF_FREEZE_ON_START,
     CONF_PAUSE_GC_UNTIL_FREEZE,
     CONF_REFREEZE_INTERVAL_HOURS,
+    CONF_REFREEZE_PAUSE_MS,
     CONF_SAMPLE_INTERVAL_MINUTES,
     CONF_SET_THRESHOLDS,
     CONF_STARTUP_DELAY_SECONDS,
@@ -45,6 +46,7 @@ from .const import (
     DEFAULT_FREEZE_ON_START,
     DEFAULT_PAUSE_GC_UNTIL_FREEZE,
     DEFAULT_REFREEZE_INTERVAL_HOURS,
+    DEFAULT_REFREEZE_PAUSE_MS,
     DEFAULT_SAMPLE_INTERVAL_MINUTES,
     DEFAULT_SET_THRESHOLDS,
     DEFAULT_STARTUP_DELAY_SECONDS,
@@ -262,9 +264,26 @@ def _arm_entry(
             else controller.async_maintain_if_due
         )
 
+        # Adaptive: a plain re-freeze is skipped until an automatic gen-2 pause
+        # since the last freeze reaches the target (peak_pause_ms resets on
+        # every freeze). The maintenance substitute is never gated.
+        pause_target = (
+            float(source.get(CONF_REFREEZE_PAUSE_MS, DEFAULT_REFREEZE_PAUSE_MS))
+            if maintenance_enabled
+            else 0.0
+        )
+
         async def _refreeze(_now) -> None:
-            if data.startup_ready:
-                await refreeze_op(min_gap)
+            if not data.startup_ready:
+                return
+            if pause_target and (controller.peak_pause_ms or 0.0) < pause_target:
+                _LOGGER.debug(
+                    "re-freeze skipped: peak gen-2 pause %s ms < target %.0f ms",
+                    controller.peak_pause_ms,
+                    pause_target,
+                )
+                return
+            await refreeze_op(min_gap)
 
         for hour, minute, second in slots:
             data.unsubs.append(
