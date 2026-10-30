@@ -26,43 +26,42 @@ keeps it effective over time.
 - **Periodic re-freeze** (optional) — new long-lived objects accumulate after
   the startup freeze and the pause slowly creeps back up. A periodic
   `collect()` + `freeze()` re-absorbs them, holding the pause near its floor.
-  Cheap, but frozen-then-dead objects are not reclaimed until maintenance.
-  The forced `collect()` holds the GIL, so with a *re-freeze pause target*
-  set (ms) each slot re-freezes only once an automatic gen-2 pause since the
-  last freeze has reached that target — the cost is paid when the unfrozen
-  heap has actually grown enough to hurt, not on a clock. 0 (default)
-  re-freezes on every slot; the target is ignored when daily maintenance is
-  off, because the periodic pass is then the full reset that bounds memory.
+  Cheap, but frozen-then-dead objects are not reclaimed until maintenance. The
+  forced `collect()` holds the GIL, so with a _re-freeze pause target_ set (ms)
+  each slot re-freezes only once an automatic gen-2 pause since the last freeze
+  has reached that target — the cost is paid when the unfrozen heap has actually
+  grown enough to hurt, not on a clock. 0 (default) re-freezes on every slot;
+  the target is ignored when daily maintenance is off, because the periodic pass
+  is then the full reset that bounds memory.
 - **Daily maintenance** (optional) — once a day, `unfreeze()` + `collect()` +
   `freeze()`: a full reset that reclaims anything frozen earlier that has since
   become garbage (the small leak the cheap re-freeze leaves), then re-freezes
   the current live set. (When daily maintenance is off, the periodic pass does
   this full reset instead, so that leak can't accumulate.)
-- **Gen-2 threshold raised while frozen** (automatic) — CPython only runs a
-  full collection when the objects pending promotion exceed 25% of the
-  long-lived total, and a frozen heap drops out of that total, so once frozen
-  the guard passes on nearly every gen-1 pass (a full collection every ~85 s
-  on a 13k-entity instance). After each freeze the gen-2 threshold is raised
-  to 1000 and put back on unfreeze or unload.
+- **Gen-2 threshold raised while frozen** (automatic) — CPython only runs a full
+  collection when the objects pending promotion exceed 25% of the long-lived
+  total, and a frozen heap drops out of that total, so once frozen the guard
+  passes on nearly every gen-1 pass (a full collection every ~85 s on a
+  13k-entity instance). After each freeze the gen-2 threshold is raised to 1000
+  and put back on unfreeze or unload.
 - **GC threshold override** (optional) — raise CPython's `gc.set_threshold()`
   values so collections run less often; off by default, restored on unload.
 
 All of the above are configurable in the options flow; a freeze with neither
 reset schedule is rejected there. Reloading keeps the heap frozen; disabling or
-removing the integration unfreezes it. Services
-`gc_manager.freeze`, `gc_manager.unfreeze`, and `gc_manager.maintain` expose the
-operations manually.
+removing the integration unfreezes it. Services `gc_manager.freeze`,
+`gc_manager.unfreeze`, and `gc_manager.maintain` expose the operations manually.
 
 Diagnostic sensors, all under one **GC Manager** device, report the frozen
 object count (and, opt-in, the tracked count, whose sample walks the unfrozen
-heap), the gen-2 pause (last and peak since the last freeze),
-the last operation and how much it reclaimed, and per-generation gc
-counts/thresholds/stats; a binary sensor reports whether automatic gc is on.
+heap), the gen-2 pause (last and peak since the last freeze), the last operation
+and how much it reclaimed, and per-generation gc counts/thresholds/stats; a
+binary sensor reports whether automatic gc is on.
 
 Every operation also fires a `gc_manager_operation` event on the bus carrying
 the action, objects collected, frozen counts before and after, duration in ms
-and timestamp, so an automation can react to a slow freeze without polling.
-The integration's **Download diagnostics** includes the options in effect, the
+and timestamp, so an automation can react to a slow freeze without polling. The
+integration's **Download diagnostics** includes the options in effect, the
 interpreter's gc thresholds and stats, and the controller's cached telemetry.
 
 ## Caveats
