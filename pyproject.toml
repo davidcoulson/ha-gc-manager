@@ -1,12 +1,15 @@
 [project]
 name = "ha-gc-manager"
-version = "0.0.2" # x-release-please-version
+version = "0.0.3" # x-release-please-version
 requires-python = ">=3.14.2"
 dependencies = []
 
 [dependency-groups]
 test = [
-  "pytest-homeassistant-custom-component>=0.13.323",
+  # Pinned exactly: the plugin pins homeassistant exactly, so this IS the HA
+  # under test. A `>=` floor never changes, so Renovate never bumps it and the
+  # lock silently stays on whatever HA it first resolved.
+  "pytest-homeassistant-custom-component==0.13.375",
 ]
 dev = [
   { include-group = "test" },
@@ -20,5 +23,5 @@ mypy_path = ["custom_components"]
 asyncio_mode = "auto"
 
 [tool.uv]
-required-version = "==0.13.0"
+required-version = "==0.13.6"
 package = false
