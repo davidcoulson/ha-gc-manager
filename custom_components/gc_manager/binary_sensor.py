@@ -14,7 +14,9 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import DOMAIN
 from .entity import gc_device_info
+from .gc_controller import GcController
 
 SCAN_INTERVAL = timedelta(minutes=5)
 
@@ -24,7 +26,8 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    async_add_entities([GcEnabledBinarySensor(entry.entry_id)])
+    controller: GcController = hass.data[DOMAIN][entry.entry_id].controller
+    async_add_entities([GcEnabledBinarySensor(entry.entry_id, controller)])
 
 
 class GcEnabledBinarySensor(BinarySensorEntity):
@@ -35,9 +38,15 @@ class GcEnabledBinarySensor(BinarySensorEntity):
     _attr_icon = "mdi:autorenew"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def __init__(self, entry_id: str) -> None:
+    def __init__(self, entry_id: str, controller: GcController) -> None:
+        self._controller = controller
         self._attr_unique_id = f"{entry_id}_gc_enabled"
         self._attr_device_info = gc_device_info(entry_id)
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(
+            self._controller.async_add_listener(self.async_write_ha_state)
+        )
 
     @property
     def is_on(self) -> bool:
