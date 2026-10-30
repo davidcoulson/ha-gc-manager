@@ -27,7 +27,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .const import EVENT_GC_OPERATION, FROZEN_GEN2_THRESHOLD
+from .const import EVENT_GC_OPERATION
 
 # Only gen-2 (full) collections meaningfully pause the loop; ignore gen-0/1.
 _FULL_GENERATION = 2
@@ -106,8 +106,6 @@ class GcController:
         self._callback: Callable[[str, dict[str, Any]], None] | None = None
         self._orig_thresholds: tuple[int, int, int] | None = None
         self._overrode_thresholds = False
-        # threshold2 as it was before the while-frozen raise; None = not raised.
-        self._gen2_before_freeze: int | None = None
         self._listeners: list[Callable[[], None]] = []
 
     def async_add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
@@ -170,23 +168,7 @@ class GcController:
         if self._overrode_thresholds and self._orig_thresholds is not None:
             gc.set_threshold(*self._orig_thresholds)
             self._overrode_thresholds = False
-            self._gen2_before_freeze = None  # covered by the full restore
             self._log.info("gc thresholds restored to %s", self._orig_thresholds)
-
-    def _raise_gen2_threshold(self) -> None:
-        """Keep gen-2 rare while frozen (see FROZEN_GEN2_THRESHOLD). Runs right
-        after freeze(), on the executor thread."""
-        gen0, gen1, gen2 = gc.get_threshold()
-        if gen2 < FROZEN_GEN2_THRESHOLD:
-            self._gen2_before_freeze = gen2
-            gc.set_threshold(gen0, gen1, FROZEN_GEN2_THRESHOLD)
-
-    def restore_gen2_threshold(self) -> None:
-        """Undo the while-frozen raise, if it is in effect."""
-        if self._gen2_before_freeze is not None:
-            gen0, gen1, _ = gc.get_threshold()
-            gc.set_threshold(gen0, gen1, self._gen2_before_freeze)
-            self._gen2_before_freeze = None
 
     def _on_gc(self, phase: str, info: dict[str, Any]) -> None:
         # Runs on whichever thread triggered the collection; collections are
@@ -284,7 +266,6 @@ class GcController:
                 before = self._frozen_now()
                 start = time.perf_counter()
                 gc.unfreeze()
-                self.restore_gen2_threshold()
                 return GcResult(
                     action="unfreeze",
                     collected=0,
@@ -333,7 +314,6 @@ class GcController:
             finally:
                 self._collecting_tid = None
             gc.freeze()
-            self._raise_gen2_threshold()
             return GcResult(
                 action=action,
                 collected=collected,
@@ -358,7 +338,6 @@ class GcController:
             finally:
                 self._collecting_tid = None
             gc.freeze()
-            self._raise_gen2_threshold()
             return GcResult(
                 action="daily maintenance (unfreeze+collect+freeze)",
                 collected=collected,

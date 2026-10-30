@@ -355,7 +355,6 @@ def _teardown(hass: HomeAssistant, entry: ConfigEntry, data: GcManagerData) -> N
     data.unsubs.clear()
     data.controller.resume_automatic()
     data.controller.restore_thresholds()
-    data.controller.restore_gen2_threshold()
     data.controller.stop()
 
     domain_data = hass.data.get(DOMAIN)

@@ -6,7 +6,7 @@
 import asyncio
 import threading
 from datetime import timedelta
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.config_entries import ConfigEntryDisabler
@@ -32,7 +32,6 @@ from custom_components.gc_manager.const import (
     CONF_THRESHOLD_GEN2,
     DEFAULT_DAILY_TIME,
     DOMAIN,
-    FROZEN_GEN2_THRESHOLD,
     SERVICE_FREEZE,
     SERVICE_MAINTAIN,
     SERVICE_UNFREEZE,
@@ -208,10 +207,7 @@ async def test_thresholds_applied_when_enabled(hass):
 async def test_thresholds_not_applied_by_default(hass):
     entry = _entry(hass)
     fake_gc, *_ = await _setup(hass, entry)
-    # only the while-frozen gen-2 raise, no override of gen-0/gen-1
-    assert fake_gc.set_threshold.call_args_list == [
-        call(2000, 10, FROZEN_GEN2_THRESHOLD)
-    ]
+    fake_gc.set_threshold.assert_not_called()
 
 
 async def test_unload_restores_overridden_thresholds(hass):
