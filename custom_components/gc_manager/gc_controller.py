@@ -20,14 +20,14 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .const import FROZEN_GEN2_THRESHOLD
+from .const import EVENT_GC_OPERATION, FROZEN_GEN2_THRESHOLD
 
 # Only gen-2 (full) collections meaningfully pause the loop; ignore gen-0/1.
 _FULL_GENERATION = 2
@@ -61,6 +61,10 @@ class GcResult:
     frozen_after: int
     duration_ms: float
     at: datetime
+
+    def as_dict(self) -> dict[str, Any]:
+        """JSON-friendly form for the operation event and diagnostics."""
+        return {**asdict(self), "at": self.at.isoformat()}
 
 
 class GcController:
@@ -363,6 +367,7 @@ class GcController:
             if freezes:
                 self.last_freeze_at = result.at
                 self.peak_pause_ms = None
+            self._hass.bus.async_fire(EVENT_GC_OPERATION, result.as_dict())
 
         return await _async_wait(self._hass.async_add_executor_job(job), _completed)
 

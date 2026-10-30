@@ -94,6 +94,9 @@ DEFAULT_THRESHOLD_GEN2: Final = _HASS_DEFAULT_THRESHOLDS[2]
 # frozen (restored on unfreeze) keeps gen-2 rare again.
 FROZEN_GEN2_THRESHOLD: Final = 1000
 
+# Fired on the HA bus after every GC operation, with the GcResult fields.
+EVENT_GC_OPERATION: Final = f"{DOMAIN}_operation"
+
 SERVICE_FREEZE: Final = "freeze"
 SERVICE_UNFREEZE: Final = "unfreeze"
 SERVICE_MAINTAIN: Final = "maintain"
