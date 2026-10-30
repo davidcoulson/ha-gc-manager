@@ -31,7 +31,7 @@ class GcEnabledBinarySensor(BinarySensorEntity):
     """Reports gc.isenabled() — whether automatic collection is running."""
 
     _attr_has_entity_name = True
-    _attr_name = "Automatic GC enabled"
+    _attr_translation_key = "gc_enabled"
     _attr_icon = "mdi:autorenew"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 

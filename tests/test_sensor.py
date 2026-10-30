@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from homeassistant.helpers.typing import UNDEFINED
+
 from custom_components.gc_manager.const import DOMAIN
 from custom_components.gc_manager.sensor import (
     DESCRIPTIONS,
@@ -130,3 +132,25 @@ def test_per_generation_values_read_gc():
         assert by_key["collections_gen2"].native_value == 5
         assert by_key["collected_gen1"].native_value == 500
         assert by_key["uncollectable_gen2"].native_value == 1
+
+
+def test_tracked_objects_sensor_is_opt_in():
+    """Its sample builds a list of every unfrozen tracked object (a GIL hold and
+    a transient allocation proportional to heap growth), so it ships disabled."""
+    by_key = {d.key: d for d in DESCRIPTIONS}
+    assert by_key["tracked_objects"].entity_registry_enabled_default is False
+    assert by_key["frozen_objects"].entity_registry_enabled_default is True
+
+
+def test_every_sensor_name_is_translated():
+    import json
+    import pathlib
+
+    strings = json.loads(
+        pathlib.Path("custom_components/gc_manager/strings.json").read_text()
+    )
+    names = strings["entity"]["sensor"]
+    for d in DESCRIPTIONS:
+        assert d.name is UNDEFINED, d.key  # names come from translations, not code
+        assert d.translation_key == d.key
+        assert names[d.key]["name"], d.key

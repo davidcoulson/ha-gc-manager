@@ -138,6 +138,17 @@ def _build_schema(source: Mapping[str, Any]) -> vol.Schema:
     )
 
 
+def _errors(user_input: Mapping[str, Any]) -> dict[str, str]:
+    """A freeze with no reset schedule retains frozen-then-dead cycles forever."""
+    if (
+        user_input[CONF_FREEZE_ON_START]
+        and int(user_input[CONF_REFREEZE_INTERVAL_HOURS]) == 0
+        and not user_input[CONF_DAILY_MAINTENANCE]
+    ):
+        return {"base": "no_reset_schedule"}
+    return {}
+
+
 class GcManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
@@ -154,20 +165,30 @@ class GcManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if self._async_current_entries():
             return self.async_abort(reason="single_instance_allowed")
 
+        errors = {}
         if user_input is not None:
-            await self.async_set_unique_id(UNIQUE_ID)
-            self._abort_if_unique_id_configured()
-            return self.async_create_entry(title=DEFAULT_NAME, data=user_input)
+            errors = _errors(user_input)
+            if not errors:
+                await self.async_set_unique_id(UNIQUE_ID)
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(title=DEFAULT_NAME, data=user_input)
 
-        return self.async_show_form(step_id="user", data_schema=_build_schema({}))
+        return self.async_show_form(
+            step_id="user", data_schema=_build_schema(user_input or {}), errors=errors
+        )
 
 
 class GcManagerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        errors = {}
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            errors = _errors(user_input)
+            if not errors:
+                return self.async_create_entry(title="", data=user_input)
 
-        source = {**self.config_entry.data, **self.config_entry.options}
-        return self.async_show_form(step_id="init", data_schema=_build_schema(source))
+        source = user_input or {**self.config_entry.data, **self.config_entry.options}
+        return self.async_show_form(
+            step_id="init", data_schema=_build_schema(source), errors=errors
+        )

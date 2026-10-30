@@ -8,7 +8,7 @@
           "freeze_on_start": "Freeze the heap after startup",
           "startup_delay_seconds": "Settle delay after an HA restart before the first freeze (seconds; 0 = immediate). Ignored on install/reload.",
           "pause_gc_until_freeze": "Keep automatic collection off during an HA start, until the startup freeze has run (needs the startup freeze; uses more memory for those minutes)",
-          "sample_interval_minutes": "Period of the frozen/tracked object-count sampler (minutes). Each tick walks the heap when either count sensor is enabled; a larger value spreads the GIL hitch out on big instances.",
+          "sample_interval_minutes": "Period of the tracked-object-count sampler (minutes). Each tick walks the unfrozen heap while the tracked-objects sensor is enabled; a larger value spreads the GIL hitch out on big instances.",
           "refreeze_interval_hours": "Periodic re-freeze interval (hours, 0 = off; rounded to a divisor of 24 and aligned to the maintenance time)",
           "daily_maintenance": "Daily unfreeze + collect + freeze (if off, the periodic re-freeze does this reset instead)",
           "daily_time": "Daily maintenance time",
@@ -21,6 +21,9 @@
     },
     "abort": {
       "single_instance_allowed": "GC Manager is already configured."
+    },
+    "error": {
+      "no_reset_schedule": "Freezing needs a reset: enable daily maintenance or a periodic re-freeze interval above 0, or turn the startup freeze off."
     }
   },
   "options": {
@@ -31,7 +34,7 @@
           "freeze_on_start": "Freeze the heap after startup",
           "startup_delay_seconds": "Settle delay after an HA restart before the first freeze (seconds; 0 = immediate). Ignored on install/reload.",
           "pause_gc_until_freeze": "Keep automatic collection off during an HA start, until the startup freeze has run (needs the startup freeze; uses more memory for those minutes)",
-          "sample_interval_minutes": "Period of the frozen/tracked object-count sampler (minutes). Each tick walks the heap when either count sensor is enabled; a larger value spreads the GIL hitch out on big instances.",
+          "sample_interval_minutes": "Period of the tracked-object-count sampler (minutes). Each tick walks the unfrozen heap while the tracked-objects sensor is enabled; a larger value spreads the GIL hitch out on big instances.",
           "refreeze_interval_hours": "Periodic re-freeze interval (hours, 0 = off; rounded to a divisor of 24 and aligned to the maintenance time)",
           "daily_maintenance": "Daily unfreeze + collect + freeze (if off, the periodic re-freeze does this reset instead)",
           "daily_time": "Daily maintenance time",
@@ -41,6 +44,9 @@
           "threshold_gen2": "Gen-2 threshold"
         }
       }
+    },
+    "error": {
+      "no_reset_schedule": "Freezing needs a reset: enable daily maintenance or a periodic re-freeze interval above 0, or turn the startup freeze off."
     }
   },
   "services": {
@@ -55,6 +61,99 @@
     "maintain": {
       "name": "Maintain",
       "description": "Run unfreeze + collect + freeze now (the full daily-maintenance reset) to reclaim frozen-then-dead objects."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gc_enabled": {
+        "name": "Automatic GC enabled"
+      }
+    },
+    "sensor": {
+      "frozen_objects": {
+        "name": "Frozen objects"
+      },
+      "tracked_objects": {
+        "name": "Tracked objects"
+      },
+      "last_pause": {
+        "name": "Last gen-2 pause"
+      },
+      "peak_pause": {
+        "name": "Peak gen-2 pause since freeze"
+      },
+      "last_pause_time": {
+        "name": "Last gen-2 pause time"
+      },
+      "uncollectable_garbage": {
+        "name": "Uncollectable garbage"
+      },
+      "last_action": {
+        "name": "Last GC action"
+      },
+      "last_action_time": {
+        "name": "Last GC action time"
+      },
+      "last_action_reclaimed": {
+        "name": "Last action reclaimed"
+      },
+      "last_action_duration": {
+        "name": "Last action duration"
+      },
+      "last_action_frozen_delta": {
+        "name": "Last action frozen delta"
+      },
+      "pause_count": {
+        "name": "Gen-2 pauses"
+      },
+      "pause_total": {
+        "name": "Gen-2 pause time"
+      },
+      "count_gen0": {
+        "name": "Gen-0 count"
+      },
+      "threshold_gen0": {
+        "name": "Gen-0 threshold"
+      },
+      "collections_gen0": {
+        "name": "Gen-0 collections"
+      },
+      "collected_gen0": {
+        "name": "Gen-0 collected"
+      },
+      "uncollectable_gen0": {
+        "name": "Gen-0 uncollectable"
+      },
+      "count_gen1": {
+        "name": "Gen-1 count"
+      },
+      "threshold_gen1": {
+        "name": "Gen-1 threshold"
+      },
+      "collections_gen1": {
+        "name": "Gen-1 collections"
+      },
+      "collected_gen1": {
+        "name": "Gen-1 collected"
+      },
+      "uncollectable_gen1": {
+        "name": "Gen-1 uncollectable"
+      },
+      "count_gen2": {
+        "name": "Gen-2 count"
+      },
+      "threshold_gen2": {
+        "name": "Gen-2 threshold"
+      },
+      "collections_gen2": {
+        "name": "Gen-2 collections"
+      },
+      "collected_gen2": {
+        "name": "Gen-2 collected"
+      },
+      "uncollectable_gen2": {
+        "name": "Gen-2 uncollectable"
+      }
     }
   }
 }

@@ -48,6 +48,10 @@ class GcSensorDescription(SensorEntityDescription):
 
     value_fn: Callable[[GcController], StateType | datetime]
 
+    def __post_init__(self) -> None:
+        # Names live in strings.json under entity.sensor.<key>.
+        object.__setattr__(self, "translation_key", self.key)
+
 
 def _ms(value: float | None) -> int | None:
     return None if value is None else round(value)
@@ -56,7 +60,6 @@ def _ms(value: float | None) -> int | None:
 _SINGLETON: tuple[GcSensorDescription, ...] = (
     GcSensorDescription(
         key="frozen_objects",
-        name="Frozen objects",
         icon="mdi:snowflake",
         native_unit_of_measurement=_OBJECTS,
         state_class=SensorStateClass.MEASUREMENT,
@@ -65,8 +68,9 @@ _SINGLETON: tuple[GcSensorDescription, ...] = (
     ),
     GcSensorDescription(
         key="tracked_objects",
-        name="Tracked objects",
         icon="mdi:counter",
+        # Sampling it builds a list of every unfrozen tracked object: opt in.
+        entity_registry_enabled_default=False,
         native_unit_of_measurement=_OBJECTS,
         state_class=SensorStateClass.MEASUREMENT,
         # Cached off-loop sample — the tracked-set walk is O(heap).
@@ -74,7 +78,6 @@ _SINGLETON: tuple[GcSensorDescription, ...] = (
     ),
     GcSensorDescription(
         key="last_pause",
-        name="Last gen-2 pause",
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.MILLISECONDS,
         state_class=SensorStateClass.MEASUREMENT,
@@ -82,7 +85,6 @@ _SINGLETON: tuple[GcSensorDescription, ...] = (
     ),
     GcSensorDescription(
         key="peak_pause",
-        name="Peak gen-2 pause since freeze",
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.MILLISECONDS,
         state_class=SensorStateClass.MEASUREMENT,
@@ -90,13 +92,11 @@ _SINGLETON: tuple[GcSensorDescription, ...] = (
     ),
     GcSensorDescription(
         key="last_pause_time",
-        name="Last gen-2 pause time",
         device_class=SensorDeviceClass.TIMESTAMP,
         value_fn=lambda c: c.last_pause_at,
     ),
     GcSensorDescription(
         key="uncollectable_garbage",
-        name="Uncollectable garbage",
         icon="mdi:delete-alert",
         native_unit_of_measurement=_OBJECTS,
         state_class=SensorStateClass.MEASUREMENT,
@@ -104,19 +104,16 @@ _SINGLETON: tuple[GcSensorDescription, ...] = (
     ),
     GcSensorDescription(
         key="last_action",
-        name="Last GC action",
         icon="mdi:history",
         value_fn=lambda c: c.last_result.action if c.last_result else None,
     ),
     GcSensorDescription(
         key="last_action_time",
-        name="Last GC action time",
         device_class=SensorDeviceClass.TIMESTAMP,
         value_fn=lambda c: c.last_result.at if c.last_result else None,
     ),
     GcSensorDescription(
         key="last_action_reclaimed",
-        name="Last action reclaimed",
         icon="mdi:broom",
         native_unit_of_measurement=_OBJECTS,
         state_class=SensorStateClass.MEASUREMENT,
@@ -124,7 +121,6 @@ _SINGLETON: tuple[GcSensorDescription, ...] = (
     ),
     GcSensorDescription(
         key="last_action_duration",
-        name="Last action duration",
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.MILLISECONDS,
         state_class=SensorStateClass.MEASUREMENT,
@@ -132,7 +128,6 @@ _SINGLETON: tuple[GcSensorDescription, ...] = (
     ),
     GcSensorDescription(
         key="last_action_frozen_delta",
-        name="Last action frozen delta",
         icon="mdi:snowflake-variant",
         native_unit_of_measurement=_OBJECTS,
         state_class=SensorStateClass.MEASUREMENT,
@@ -144,14 +139,12 @@ _SINGLETON: tuple[GcSensorDescription, ...] = (
     ),
     GcSensorDescription(
         key="pause_count",
-        name="Gen-2 pauses",
         icon="mdi:pause-circle-outline",
         state_class=SensorStateClass.TOTAL_INCREASING,
         value_fn=lambda c: c.pause_count,
     ),
     GcSensorDescription(
         key="pause_total",
-        name="Gen-2 pause time",
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.MILLISECONDS,
         state_class=SensorStateClass.TOTAL_INCREASING,
@@ -181,7 +174,6 @@ def _per_generation() -> list[GcSensorDescription]:
         out.append(
             GcSensorDescription(
                 key=f"count_gen{gen}",
-                name=f"Gen-{gen} count",
                 native_unit_of_measurement=_OBJECTS,
                 state_class=SensorStateClass.MEASUREMENT,
                 value_fn=_count(gen),
@@ -190,7 +182,6 @@ def _per_generation() -> list[GcSensorDescription]:
         out.append(
             GcSensorDescription(
                 key=f"threshold_gen{gen}",
-                name=f"Gen-{gen} threshold",
                 state_class=SensorStateClass.MEASUREMENT,
                 value_fn=_threshold(gen),
             )
@@ -198,7 +189,6 @@ def _per_generation() -> list[GcSensorDescription]:
         out.append(
             GcSensorDescription(
                 key=f"collections_gen{gen}",
-                name=f"Gen-{gen} collections",
                 native_unit_of_measurement=_COLLECTIONS,
                 state_class=SensorStateClass.TOTAL_INCREASING,
                 value_fn=_stat(gen, "collections"),
@@ -207,7 +197,6 @@ def _per_generation() -> list[GcSensorDescription]:
         out.append(
             GcSensorDescription(
                 key=f"collected_gen{gen}",
-                name=f"Gen-{gen} collected",
                 native_unit_of_measurement=_OBJECTS,
                 state_class=SensorStateClass.TOTAL_INCREASING,
                 value_fn=_stat(gen, "collected"),
@@ -216,7 +205,6 @@ def _per_generation() -> list[GcSensorDescription]:
         out.append(
             GcSensorDescription(
                 key=f"uncollectable_gen{gen}",
-                name=f"Gen-{gen} uncollectable",
                 native_unit_of_measurement=_OBJECTS,
                 state_class=SensorStateClass.TOTAL_INCREASING,
                 value_fn=_stat(gen, "uncollectable"),

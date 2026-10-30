@@ -87,6 +87,13 @@ DEFAULT_THRESHOLD_GEN0: Final = _HASS_DEFAULT_THRESHOLDS[0]
 DEFAULT_THRESHOLD_GEN1: Final = _HASS_DEFAULT_THRESHOLDS[1]
 DEFAULT_THRESHOLD_GEN2: Final = _HASS_DEFAULT_THRESHOLDS[2]
 
+# While the heap is frozen, CPython's gen-2 trigger ("pending long-lived objects
+# > 25% of the long-lived total") fires on nearly every gen-1 pass, because the
+# frozen objects no longer count toward that total — measured as a full
+# collection every ~85 s on a 13k-entity instance. Raising threshold2 while
+# frozen (restored on unfreeze) keeps gen-2 rare again.
+FROZEN_GEN2_THRESHOLD: Final = 1000
+
 SERVICE_FREEZE: Final = "freeze"
 SERVICE_UNFREEZE: Final = "unfreeze"
 SERVICE_MAINTAIN: Final = "maintain"
@@ -129,5 +136,6 @@ def refreeze_min_gap(interval_hours: int) -> timedelta:
     return timedelta(hours=round_refreeze_interval(interval_hours) / 2)
 
 
-# The sensors fed by the (costly) frozen/tracked object sample.
-COUNT_SENSOR_KEYS: tuple[str, ...] = ("frozen_objects", "tracked_objects")
+# The sensor fed by the (costly) tracked-object sample; the frozen count is kept
+# current by our own freeze/unfreeze ops and needs no periodic walk.
+COUNT_SENSOR_KEYS: tuple[str, ...] = ("tracked_objects",)

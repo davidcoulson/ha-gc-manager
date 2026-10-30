@@ -69,10 +69,38 @@ async def test_options_flow_updates(hass):
         result = await hass.config_entries.options.async_init(entry.entry_id)
         assert result["type"] is FlowResultType.FORM
 
-        new = {**_INPUT, CONF_REFREEZE_INTERVAL_HOURS: 0, CONF_DAILY_MAINTENANCE: False}
+        new = {
+            **_INPUT,
+            CONF_FREEZE_ON_START: False,
+            CONF_REFREEZE_INTERVAL_HOURS: 0,
+            CONF_DAILY_MAINTENANCE: False,
+        }
         result = await hass.config_entries.options.async_configure(
             result["flow_id"], new
         )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_REFREEZE_INTERVAL_HOURS] == 0
     assert result["data"][CONF_DAILY_MAINTENANCE] is False
+
+
+async def test_freeze_without_any_reset_schedule_is_rejected(hass):
+    """Freezing with neither the periodic nor the daily reset would retain
+    frozen-then-dead cycles for the life of the process."""
+    bad = {**_INPUT, CONF_REFREEZE_INTERVAL_HOURS: 0, CONF_DAILY_MAINTENANCE: False}
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], bad)
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "no_reset_schedule"}
+
+    entry = MockConfigEntry(domain=DOMAIN, data=_INPUT)
+    entry.add_to_hass(hass)
+    with patch("custom_components.gc_manager.async_setup_entry", return_value=True):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], bad
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "no_reset_schedule"}

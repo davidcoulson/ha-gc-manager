@@ -35,3 +35,15 @@ async def test_platform_setup_adds_one_entity(hass):
     assert len(added) == 1
     assert isinstance(added[0], GcEnabledBinarySensor)
     assert added[0].unique_id == "gcm_gc_enabled"
+
+
+def test_binary_sensor_name_is_translated():
+    import json
+    import pathlib
+
+    strings = json.loads(
+        pathlib.Path("custom_components/gc_manager/strings.json").read_text()
+    )
+    sensor = GcEnabledBinarySensor("e1")
+    assert sensor.translation_key == "gc_enabled"
+    assert strings["entity"]["binary_sensor"]["gc_enabled"]["name"]

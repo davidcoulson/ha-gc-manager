@@ -207,12 +207,11 @@ def _arm_entry(
             int(source.get(CONF_THRESHOLD_GEN2, DEFAULT_THRESHOLD_GEN2)),
         )
 
-    # ── off-loop sampling of the frozen + tracked object counts ────────────
-    # Off the loop is not free: both walks hold the GIL for their whole length
-    # (~0.3 s for gc.get_freeze_count() with ~3.5 M frozen objects on Python
-    # 3.14), so the event loop stalls while they run all the same. The counts
-    # feed only the two count sensors, so while both are disabled there is
-    # nothing to sample for.
+    # ── off-loop sampling of the tracked object count ──────────────────────
+    # Off the loop is not free: the walk holds the GIL for its whole length, so
+    # the event loop stalls while it runs all the same. It feeds only the
+    # tracked-objects sensor, so while that is disabled there is nothing to
+    # sample for (the frozen count is refreshed by each freeze/unfreeze op).
     @callback
     def _counts_wanted() -> bool:
         registry = er.async_get(hass)
@@ -307,6 +306,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await data.controller.async_close()
     finally:
         _teardown(hass, entry, data)
+    if entry.disabled_by is not None:
+        # HA sets disabled_by before unloading. A disable is indefinite, unlike a
+        # reload, so don't leave a frozen heap nobody will maintain.
+        await hass.async_add_executor_job(gc.unfreeze)
     return unload_ok
 
 
@@ -333,6 +336,7 @@ def _teardown(hass: HomeAssistant, entry: ConfigEntry, data: GcManagerData) -> N
     data.unsubs.clear()
     data.controller.resume_automatic()
     data.controller.restore_thresholds()
+    data.controller.restore_gen2_threshold()
     data.controller.stop()
 
     domain_data = hass.data.get(DOMAIN)
