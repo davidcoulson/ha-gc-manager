@@ -1,14 +1,27 @@
+# Copyright (c) 2026 Kenneth Baker <bakerkj@umich.edu>
+# All rights reserved.
+
 """Regression test against the real collector, not a mocked gc module.
 
 Runs in a subprocess so freezing a heap never touches pytest's own.
 """
 
+import gc
 import json
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from custom_components.gc_manager.const import FROZEN_GEN2_THRESHOLD
+
+# CPython 3.14.0-3.14.4 shipped the incremental collector: threshold2 is 0 and
+# unused, old objects are scanned in slices, so a frozen heap causes no gen-2
+# storm there and there is nothing for the raise to fix.
+pytestmark = pytest.mark.skipif(
+    gc.get_threshold()[2] == 0, reason="incremental collector, threshold2 unused"
+)
 
 _PROBE = """
 import gc, json, logging, sys
