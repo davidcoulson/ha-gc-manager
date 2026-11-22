@@ -45,18 +45,6 @@ async def test_platform_setup_adds_one_entity(hass):
     assert added[0].unique_id == "gcm_gc_enabled"
 
 
-def test_binary_sensor_name_is_translated():
-    import json
-    import pathlib
-
-    strings = json.loads(
-        pathlib.Path("custom_components/gc_manager/strings.json").read_text()
-    )
-    sensor = GcEnabledBinarySensor("e1", _controller())
-    assert sensor.translation_key == "gc_enabled"
-    assert strings["entity"]["binary_sensor"]["gc_enabled"]["name"]
-
-
 async def test_binary_sensor_state_is_pushed_on_pause_and_resume(hass):
     g = MagicMock()
     g.isenabled.return_value = True

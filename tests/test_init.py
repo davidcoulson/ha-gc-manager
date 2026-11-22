@@ -9,7 +9,7 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from homeassistant.config_entries import ConfigEntryDisabler
+from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
 from homeassistant.core import CoreState
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -201,7 +201,7 @@ async def test_thresholds_applied_when_enabled(hass):
         },
     )
     fake_gc, *_ = await _setup(hass, entry)
-    fake_gc.set_threshold.assert_any_call(5000, 20, 20)
+    fake_gc.set_threshold.assert_called_with(5000, 20, 20)
 
 
 async def test_thresholds_not_applied_by_default(hass):
@@ -229,7 +229,7 @@ async def test_unload_restores_overridden_thresholds(hass):
     with p_gc, p_change, p_interval, p_cl, p_started, p_fwd:
         assert await async_setup_entry(hass, entry)
         await hass.async_block_till_done(wait_background_tasks=True)
-        fake_gc.set_threshold.assert_any_call(5000, 20, 20)  # override applied
+        fake_gc.set_threshold.assert_called_with(5000, 20, 20)  # override applied
         fake_gc.set_threshold.reset_mock()
         with patch.object(
             hass.config_entries,
@@ -357,7 +357,7 @@ async def test_count_sampler_honors_configured_interval(hass):
 async def test_count_sampler_skips_while_both_count_sensors_are_disabled(hass):
     """The frozen/tracked walks hold the GIL for their whole length, so with
     both count sensors disabled there is nothing to sample for: no walk runs.
-    Re-enabling either one brings the sampling back on the next tick."""
+    Re-enabling one walks only that set on the next tick."""
     from homeassistant.helpers import entity_registry as er
 
     entry = _entry(hass, freeze_on_start=False)
@@ -380,13 +380,41 @@ async def test_count_sampler_skips_while_both_count_sensors_are_disabled(hass):
         fake_gc.get_freeze_count.assert_not_called()
         fake_gc.get_objects.assert_not_called()
         assert controller.frozen_count is None
-        # enable one: the next scheduled tick samples again
+        # enable tracked only: the next tick walks only the tracked set
         eid = reg.async_get_entity_id(
             "sensor", DOMAIN, f"{entry.entry_id}_tracked_objects"
         )
         reg.async_update_entity(eid, disabled_by=None)
         await m_interval.call_args.args[1]()
-        fake_gc.get_freeze_count.assert_called_once()
+        fake_gc.get_objects.assert_called_once()
+        fake_gc.get_freeze_count.assert_not_called()
+        assert controller.tracked_count == 0
+        assert controller.frozen_count is None
+
+
+async def test_count_sampler_walks_only_the_enabled_sensor(hass):
+    """Frozen on, tracked off: only the frozen set is walked."""
+    from homeassistant.helpers import entity_registry as er
+
+    entry = _entry(hass, freeze_on_start=False)
+    er.async_get(hass).async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{entry.entry_id}_tracked_objects",
+        config_entry=entry,
+        disabled_by=er.RegistryEntryDisabler.USER,
+    )
+    fake_gc = _fake_gc()
+    hass.set_state(CoreState.running)
+    p_gc, p_change, p_interval, p_cl, p_started, p_fwd = _patches(fake_gc, hass)
+    with p_gc, p_change, p_interval, p_cl, p_started, p_fwd:
+        assert await async_setup_entry(hass, entry)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        controller = hass.data[DOMAIN][entry.entry_id].controller
+    fake_gc.get_freeze_count.assert_called_once()
+    fake_gc.get_objects.assert_not_called()
+    assert controller.frozen_count == 5000
+    assert controller.tracked_count is None
 
 
 async def test_install_reload_freezes_immediately_no_delay(hass):
@@ -413,6 +441,21 @@ async def test_maintenance_off_periodic_does_full_maintenance(hass):
         await action(None)
         await hass.async_block_till_done(wait_background_tasks=True)
         fake_gc.unfreeze.assert_called()  # maintenance path, not plain re-freeze
+        last = hass.data[DOMAIN][entry.entry_id].controller.last_result
+        assert last.action == "periodic maintenance (unfreeze+collect+freeze)"
+
+
+async def test_maintain_service_is_labelled_manual(hass):
+    entry = _entry(hass, freeze_on_start=False)
+    fake_gc = _fake_gc()
+    hass.set_state(CoreState.running)
+    p_gc, p_change, p_interval, p_cl, p_started, p_fwd = _patches(fake_gc, hass)
+    with p_gc, p_change, p_interval, p_cl, p_started, p_fwd:
+        assert await async_setup_entry(hass, entry)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        await hass.services.async_call(DOMAIN, SERVICE_MAINTAIN, blocking=True)
+        last = hass.data[DOMAIN][entry.entry_id].controller.last_result
+        assert last.action == "manual maintenance (service)"
 
 
 async def test_restart_schedules_freeze_via_settle_timer(hass):
@@ -505,40 +548,51 @@ async def test_unload_cancels_and_removes(hass):
     assert DOMAIN not in hass.data
 
 
-async def test_unload_on_disable_unfreezes(hass):
-    """Disabling the entry is indefinite (unlike a reload), so the heap is thawed
-    rather than left frozen with no maintenance to reclaim it."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={CONF_FREEZE_ON_START: True},
-        entry_id="gcm",
-        disabled_by=ConfigEntryDisabler.USER,
+async def _fire_first_refreeze_slot(hass, entry, fake_gc, m_change):
+    action = m_change.call_args_list[0].args[1]  # slots come before the daily job
+    with patch("custom_components.gc_manager.gc_controller.gc", fake_gc):
+        await action(None)
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+
+async def test_refreeze_waits_for_a_gen2_pause_at_the_target(hass):
+    """With a pause target set, the slot re-freezes only once an automatic gen-2
+    pause since the last freeze reached it; the unfrozen heap has to hurt first."""
+    entry = _entry(hass, freeze_on_start=False, **{CONF_REFREEZE_PAUSE_MS: 200})
+    fake_gc, m_change, *_ = await _setup(hass, entry)
+    controller = hass.data[DOMAIN][entry.entry_id].controller
+
+    await _fire_first_refreeze_slot(hass, entry, fake_gc, m_change)
+    fake_gc.freeze.assert_not_called()  # nothing measured yet
+
+    controller.peak_pause_ms = 199.0
+    await _fire_first_refreeze_slot(hass, entry, fake_gc, m_change)
+    fake_gc.freeze.assert_not_called()  # below target
+
+    controller.peak_pause_ms = 200.0
+    await _fire_first_refreeze_slot(hass, entry, fake_gc, m_change)
+    fake_gc.freeze.assert_called_once()
+
+
+async def test_refreeze_target_zero_keeps_the_unconditional_schedule(hass):
+    entry = _entry(hass, freeze_on_start=False, **{CONF_REFREEZE_PAUSE_MS: 0})
+    fake_gc, m_change, *_ = await _setup(hass, entry)
+    await _fire_first_refreeze_slot(hass, entry, fake_gc, m_change)
+    fake_gc.freeze.assert_called_once()
+
+
+async def test_refreeze_target_does_not_gate_the_maintenance_substitute(hass):
+    """With daily maintenance off the periodic pass is the only full reset, which
+    is about memory rather than pauses, so it keeps running on schedule."""
+    entry = _entry(
+        hass,
+        freeze_on_start=False,
+        **{CONF_DAILY_MAINTENANCE: False, CONF_REFREEZE_PAUSE_MS: 200},
     )
-    entry.add_to_hass(hass)
-    await _setup(hass, entry)
-    fake_gc = MagicMock()
-    with (
-        patch("custom_components.gc_manager.gc", fake_gc),
-        patch.object(
-            hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True)
-        ),
-    ):
-        assert await async_unload_entry(hass, entry)
+    fake_gc, m_change, *_ = await _setup(hass, entry)
+    await _fire_first_refreeze_slot(hass, entry, fake_gc, m_change)
     fake_gc.unfreeze.assert_called_once()
-
-
-async def test_unload_for_reload_keeps_the_heap_frozen(hass):
-    entry = _entry(hass)
-    await _setup(hass, entry)
-    fake_gc = MagicMock()
-    with (
-        patch("custom_components.gc_manager.gc", fake_gc),
-        patch.object(
-            hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True)
-        ),
-    ):
-        assert await async_unload_entry(hass, entry)
-    fake_gc.unfreeze.assert_not_called()
+    fake_gc.freeze.assert_called_once()
 
 
 async def test_cancelled_setup_cleans_up_and_can_retry(hass):
@@ -651,63 +705,12 @@ async def test_teardown_drains_dispatched_work(hass, origin, remove_directly):
         await controller.async_refresh_counts()
         fake_gc.freeze.assert_not_called()
         fake_gc.collect.assert_not_called()
+        fake_gc.unfreeze.assert_not_called()
         fake_gc.get_objects.assert_not_called()
         assert await async_setup_entry(hass, entry)
         await hass.async_block_till_done(wait_background_tasks=True)
         assert hass.data[DOMAIN][entry.entry_id].controller is not controller
         assert await async_unload_entry(hass, entry)
-
-
-@pytest.mark.parametrize("daily_enabled", [False, True])
-@pytest.mark.parametrize("startup_freeze", [False, True])
-async def test_schedules_wait_for_startup_barrier(hass, daily_enabled, startup_freeze):
-    entry = _entry(
-        hass,
-        daily_maintenance=daily_enabled,
-        freeze_on_start=startup_freeze,
-        pause_gc_until_freeze=True,
-    )
-    fake_gc = _fake_gc()
-    hass.set_state(CoreState.starting)
-    p_gc, p_change, p_interval, p_cl, p_started, p_fwd = _patches(fake_gc, hass)
-    with (
-        p_gc,
-        p_change as change,
-        p_interval,
-        p_cl as later,
-        p_started as started,
-        p_fwd,
-    ):
-        assert await async_setup_entry(hass, entry)
-        await hass.async_block_till_done(wait_background_tasks=True)
-        actions = {call.args[1] for call in change.call_args_list}
-        for action in actions:
-            await action(None)
-        if startup_freeze:
-            fake_gc.collect.assert_not_called()
-            fake_gc.freeze.assert_not_called()
-            started.call_args.args[1](hass)
-            for action in actions:  # still settling after HA started
-                await action(None)
-            fake_gc.collect.assert_not_called()
-            freeze = next(
-                call.args[2] for call in later.call_args_list if call.args[1] == 120
-            )
-            await freeze(None)
-            fake_gc.enable.assert_called_once()
-            controller = hass.data[DOMAIN][entry.entry_id].controller
-            controller.last_freeze_at = None  # allow the next periodic slot
-            fake_gc.reset_mock()
-            for action in actions:
-                await action(None)
-            fake_gc.freeze.assert_called()
-        else:
-            fake_gc.freeze.assert_called()  # disabled startup freeze has no barrier
-            fake_gc.disable.assert_not_called()
-        with patch.object(
-            hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True)
-        ):
-            assert await async_unload_entry(hass, entry)
 
 
 async def test_replacement_setup_waits_for_previous_controller(hass):
@@ -750,70 +753,123 @@ async def test_replacement_setup_waits_for_previous_controller(hass):
             assert await async_unload_entry(hass, entry)
 
 
-async def test_count_sampler_is_keyed_on_the_tracked_sensor_only(hass):
-    """The frozen count is kept current by our own ops, so only the tracked
-    count needs the periodic heap walk: with that sensor disabled, no sampling."""
-    from homeassistant.helpers import entity_registry as er
+async def test_unload_on_disable_unfreezes(hass):
+    """Disabling the entry is indefinite (unlike a reload), so the heap is thawed
+    rather than left frozen with no maintenance to reclaim it."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_FREEZE_ON_START: True},
+        entry_id="gcm",
+        disabled_by=ConfigEntryDisabler.USER,
+    )
+    entry.add_to_hass(hass)
+    await _setup(hass, entry)
+    fake_gc = MagicMock()
+    with (
+        patch("custom_components.gc_manager.gc", fake_gc),
+        patch.object(
+            hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True)
+        ),
+    ):
+        assert await async_unload_entry(hass, entry)
+    fake_gc.unfreeze.assert_called_once()
 
+
+async def test_unload_for_reload_keeps_the_heap_frozen(hass):
+    entry = _entry(hass)
+    await _setup(hass, entry)
+    fake_gc = MagicMock()
+    with (
+        patch("custom_components.gc_manager.gc", fake_gc),
+        patch.object(
+            hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True)
+        ),
+    ):
+        assert await async_unload_entry(hass, entry)
+    fake_gc.unfreeze.assert_not_called()
+
+
+async def test_disable_through_ha_unfreezes_but_reload_does_not(hass):
     entry = _entry(hass, freeze_on_start=False)
-    reg = er.async_get(hass)
-    reg.async_get_or_create(
-        "sensor",
-        DOMAIN,
-        f"{entry.entry_id}_tracked_objects",
-        config_entry=entry,
-        disabled_by=er.RegistryEntryDisabler.INTEGRATION,
-    )
-    reg.async_get_or_create(  # enabled
-        "sensor", DOMAIN, f"{entry.entry_id}_frozen_objects", config_entry=entry
-    )
-    fake_gc, *_ = await _setup(hass, entry)
-    fake_gc.get_objects.assert_not_called()
-    fake_gc.get_freeze_count.assert_not_called()
-
-
-async def _fire_first_refreeze_slot(hass, entry, fake_gc, m_change):
-    action = m_change.call_args_list[0].args[1]  # slots come before the daily job
-    with patch("custom_components.gc_manager.gc_controller.gc", fake_gc):
-        await action(None)
+    fake_gc = _fake_gc()
+    p_gc, p_change, p_interval, p_cl, p_started, _ = _patches(fake_gc, hass)
+    with (
+        p_gc,
+        p_change,
+        p_interval,
+        p_cl,
+        p_started,
+        patch("custom_components.gc_manager.gc", fake_gc),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done(wait_background_tasks=True)
+        assert await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        fake_gc.unfreeze.assert_not_called()
+
+        await hass.config_entries.async_set_disabled_by(
+            entry.entry_id, ConfigEntryDisabler.USER
+        )
+        await hass.async_block_till_done(wait_background_tasks=True)
+    assert entry.state is ConfigEntryState.NOT_LOADED
+    fake_gc.unfreeze.assert_called_once()
 
 
-async def test_refreeze_waits_for_a_gen2_pause_at_the_target(hass):
-    """With a pause target set, the slot re-freezes only once an automatic gen-2
-    pause since the last freeze reached it; the unfrozen heap has to hurt first."""
-    entry = _entry(hass, freeze_on_start=False, **{CONF_REFREEZE_PAUSE_MS: 200})
+async def test_scheduled_ops_wait_for_the_startup_freeze(hass):
+    """A re-freeze or daily slot that fires while the startup freeze is still
+    pending must not run: it would freeze startup-transient objects."""
+    entry = _entry(hass, startup_delay_seconds=120)
+    fake_gc = _fake_gc()
+    hass.set_state(CoreState.starting)
+    p_gc, p_change, p_interval, p_cl, p_started, p_fwd = _patches(fake_gc, hass)
+    with (
+        p_gc,
+        p_change as m_change,
+        p_interval,
+        p_cl as m_cl,
+        p_started as m_started,
+        p_fwd,
+    ):
+        assert await async_setup_entry(hass, entry)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        refreeze = m_change.call_args_list[0].args[1]
+        daily = m_change.call_args_list[-1].args[1]
+        await refreeze(None)
+        await daily(None)
+        fake_gc.freeze.assert_not_called()
+
+        m_started.call_args.args[1](hass)
+        await next(c for c in m_cl.call_args_list if c.args[1] == 120).args[2](None)
+        assert fake_gc.freeze.call_count == 1  # the startup freeze itself
+
+        await daily(None)
+        assert fake_gc.freeze.call_count == 2
+
+
+async def test_reload_startup_freeze_opens_the_gate(hass):
+    """Already running (install/reload): the immediate startup freeze opens it."""
+    entry = _entry(hass)
     fake_gc, m_change, *_ = await _setup(hass, entry)
+    assert hass.data[DOMAIN][entry.entry_id].startup_ready
+    assert fake_gc.freeze.call_count == 1
+    daily = m_change.call_args_list[-1].args[1]
+    with patch("custom_components.gc_manager.gc_controller.gc", fake_gc):
+        await daily(None)
+    assert fake_gc.freeze.call_count == 2
+
+
+async def test_maintenance_substitute_waits_for_the_startup_freeze(hass):
+    """With daily off, the periodic maintenance slot is gated too."""
+    entry = _entry(hass, **{CONF_DAILY_MAINTENANCE: False}, startup_delay_seconds=120)
+    fake_gc, m_change, m_cl, _ = await _setup(hass, entry, running=False)
+    await _fire_first_refreeze_slot(hass, entry, fake_gc, m_change)
+    fake_gc.unfreeze.assert_not_called()
+    fake_gc.freeze.assert_not_called()
+
+    startup = next(c for c in m_cl.call_args_list if c.args[1] == 120).args[2]
+    with patch("custom_components.gc_manager.gc_controller.gc", fake_gc):
+        await startup(None)
     controller = hass.data[DOMAIN][entry.entry_id].controller
-
-    await _fire_first_refreeze_slot(hass, entry, fake_gc, m_change)
-    fake_gc.freeze.assert_not_called()  # nothing measured yet
-
-    controller.peak_pause_ms = 199.0
-    await _fire_first_refreeze_slot(hass, entry, fake_gc, m_change)
-    fake_gc.freeze.assert_not_called()  # below target
-
-    controller.peak_pause_ms = 200.0
-    await _fire_first_refreeze_slot(hass, entry, fake_gc, m_change)
-    fake_gc.freeze.assert_called_once()
-
-
-async def test_refreeze_target_zero_keeps_the_unconditional_schedule(hass):
-    entry = _entry(hass, freeze_on_start=False, **{CONF_REFREEZE_PAUSE_MS: 0})
-    fake_gc, m_change, *_ = await _setup(hass, entry)
-    await _fire_first_refreeze_slot(hass, entry, fake_gc, m_change)
-    fake_gc.freeze.assert_called_once()
-
-
-async def test_refreeze_target_does_not_gate_the_maintenance_substitute(hass):
-    """With daily maintenance off the periodic pass is the only full reset, which
-    is about memory rather than pauses, so it keeps running on schedule."""
-    entry = _entry(
-        hass,
-        freeze_on_start=False,
-        **{CONF_DAILY_MAINTENANCE: False, CONF_REFREEZE_PAUSE_MS: 200},
-    )
-    fake_gc, m_change, *_ = await _setup(hass, entry)
+    controller.last_freeze_at -= timedelta(hours=4)  # past the debounce
     await _fire_first_refreeze_slot(hass, entry, fake_gc, m_change)
     fake_gc.unfreeze.assert_called_once()
-    fake_gc.freeze.assert_called_once()

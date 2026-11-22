@@ -11,6 +11,7 @@ from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
+from homeassistant.core import callback
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_capture_events
 
@@ -24,7 +25,6 @@ def _const_gc():
     g = MagicMock()
     g.get_freeze_count.return_value = 5000
     g.collect.return_value = 1
-    g.get_threshold.return_value = (2000, 10, 10)
     return g
 
 
@@ -33,7 +33,6 @@ def _fake_gc(freeze_counts):
     g = MagicMock()
     g.get_freeze_count.side_effect = list(freeze_counts)
     g.collect.return_value = 42
-    g.get_threshold.return_value = (2000, 10, 10)
     return g
 
 
@@ -231,6 +230,19 @@ async def test_async_refresh_counts_samples_off_loop(hass):
         assert controller.tracked_count == 4
 
 
+async def test_refresh_counts_walks_only_what_is_asked(hass):
+    g = MagicMock()
+    g.get_freeze_count.return_value = 1234
+    g.get_objects.return_value = [1, 2, 3, 4]
+    with patch("custom_components.gc_manager.gc_controller.gc", g):
+        controller = GcController(hass, _LOG)
+        controller.tracked_count = 99
+        await controller.async_refresh_counts(frozen=True, tracked=False)
+    g.get_objects.assert_not_called()
+    assert controller.frozen_count == 1234
+    assert controller.tracked_count == 99  # left as it was
+
+
 async def test_maintain_if_due_runs_and_debounces(hass):
     g = _const_gc()
     with patch("custom_components.gc_manager.gc_controller.gc", g):
@@ -254,7 +266,6 @@ async def test_lock_serializes_compound_ops(hass):
     """
     g = MagicMock()
     g.get_freeze_count.return_value = 5000
-    g.get_threshold.return_value = (2000, 10, 10)
     order: list[str] = []
 
     def _rec(name):
@@ -291,6 +302,123 @@ def test_gen2_pauses_are_counted_and_added_up(hass):
             controller.pause_total_ms >= 0
             and controller.pause_total_ms == pytest.approx(controller.pause_total_ms)
         )
+
+
+async def test_listeners_fire_after_ops_count_refresh_and_pause_toggle(hass):
+    """Entities subscribe so their state is written the moment an op lands,
+    instead of waiting for the next poll."""
+    g = _const_gc()
+    g.get_objects.return_value = []
+    g.isenabled.return_value = True
+    seen = MagicMock()
+    with patch("custom_components.gc_manager.gc_controller.gc", g):
+        controller = GcController(hass, _LOG)
+        remove = controller.async_add_listener(seen)
+        await controller.async_collect_and_freeze("startup freeze")
+        assert seen.call_count == 1
+        await controller.async_refresh_counts()
+        assert seen.call_count == 2
+        assert controller.pause_automatic()
+        assert seen.call_count == 3
+        assert controller.resume_automatic()
+        assert seen.call_count == 4
+        remove()
+        await controller.async_unfreeze()
+        assert seen.call_count == 4
+
+
+async def test_listeners_fire_after_maintenance_and_unfreeze(hass):
+    g = _const_gc()
+    seen = MagicMock()
+    with patch("custom_components.gc_manager.gc_controller.gc", g):
+        controller = GcController(hass, _LOG)
+        controller.async_add_listener(seen)
+        await controller.async_maintenance()
+        assert seen.call_count == 1
+        await controller.async_unfreeze()
+        assert seen.call_count == 2
+
+
+async def test_listener_sees_frozen_count_from_the_op_it_follows(hass):
+    """The pushed state must carry the new count, not the last scheduled sample."""
+    g = _fake_gc([5000, 7000, 7000, 0])
+    pushed: list[int | None] = []
+    with patch("custom_components.gc_manager.gc_controller.gc", g):
+        controller = GcController(hass, _LOG)
+        controller.async_add_listener(lambda: pushed.append(controller.frozen_count))
+        await controller.async_collect_and_freeze("manual freeze")
+        await controller.async_unfreeze()
+    assert pushed == [7000, 0]
+
+
+async def test_failing_listener_does_not_fail_the_op_or_other_listeners(hass):
+    g = _const_gc()
+    bad = MagicMock(side_effect=RuntimeError("boom"))
+    good = MagicMock()
+    with patch("custom_components.gc_manager.gc_controller.gc", g):
+        controller = GcController(hass, _LOG)
+        controller.async_add_listener(bad)
+        controller.async_add_listener(good)
+        result = await controller.async_collect_and_freeze("manual freeze")
+    assert result.action == "manual freeze"
+    bad.assert_called_once()
+    good.assert_called_once()
+
+
+async def test_every_operation_fires_an_event_with_its_result(hass):
+    """Automations can react to a slow freeze without polling the sensors."""
+    g = _const_gc()
+    events = async_capture_events(hass, EVENT_GC_OPERATION)
+    with patch("custom_components.gc_manager.gc_controller.gc", g):
+        controller = GcController(hass, _LOG)
+        result = await controller.async_collect_and_freeze("startup freeze")
+        await controller.async_unfreeze()
+        await controller.async_maintenance()
+    await hass.async_block_till_done()
+    assert [e.data["action"] for e in events] == [
+        "startup freeze",
+        "unfreeze",
+        "daily maintenance (unfreeze+collect+freeze)",
+    ]
+    first = events[0].data
+    assert first["collected"] == 1
+    assert first["frozen_before"] == 5000
+    assert first["frozen_after"] == 5000
+    assert first["duration_ms"] == result.duration_ms
+    assert first["at"] == result.at.isoformat()
+
+
+async def test_event_fires_after_state_is_updated_and_pushed(hass):
+    """A listener must see the op's state and the sensors already pushed."""
+    g = _const_gc()
+    order: list[str] = []
+    at_event: list = []
+    with patch("custom_components.gc_manager.gc_controller.gc", g):
+        controller = GcController(hass, _LOG)
+        controller.peak_pause_ms = 99.0
+        controller.async_add_listener(lambda: order.append("push"))
+
+        @callback
+        def _on_event(_event) -> None:
+            order.append("event")
+            at_event.append((controller.last_freeze_at, controller.peak_pause_ms))
+
+        hass.bus.async_listen(EVENT_GC_OPERATION, _on_event)
+        result = await controller.async_collect_and_freeze("manual freeze")
+        await hass.async_block_till_done()
+    assert order == ["push", "event"]
+    assert at_event == [(result.at, None)]
+
+
+async def test_periodic_and_manual_maintenance_are_labelled_as_such(hass):
+    g = _const_gc()
+    with patch("custom_components.gc_manager.gc_controller.gc", g):
+        controller = GcController(hass, _LOG)
+        periodic = await controller.async_maintain_if_due(timedelta(0))
+        manual = await controller.async_maintenance("manual maintenance (service)")
+    assert periodic is not None
+    assert periodic.action == "periodic maintenance (unfreeze+collect+freeze)"
+    assert manual.action == "manual maintenance (service)"
 
 
 @pytest.mark.parametrize("operation", ["freeze", "maintenance", "unfreeze"])
@@ -379,60 +507,3 @@ async def test_close_drains_worker_and_rejects_queued_operations(hass):
         g.collect.assert_called_once()
         g.freeze.assert_called_once()
         g.unfreeze.assert_not_called()
-
-
-async def test_frozen_count_is_walked_once_then_carried_between_ops(hass):
-    """gc.get_freeze_count() walks the whole frozen set, and only our own ops
-    change it — so after the first walk each op reads the cached value as its
-    'before' and refreshes the cache with its single 'after' walk."""
-    g = _fake_gc([100, 5000, 7000])
-    with patch("custom_components.gc_manager.gc_controller.gc", g):
-        controller = GcController(hass, _LOG)
-        r1 = await controller.async_collect_and_freeze("a")
-        r2 = await controller.async_collect_and_freeze("b")
-        await controller.async_refresh_counts()  # no further frozen-set walk
-    assert (r1.frozen_before, r1.frozen_after) == (100, 5000)
-    assert (r2.frozen_before, r2.frozen_after) == (5000, 7000)
-    assert g.get_freeze_count.call_count == 3
-    assert controller.frozen_count == 7000
-
-
-async def test_listeners_fire_after_ops_count_refresh_and_pause_toggle(hass):
-    """Entities subscribe so their state is written the moment an op lands,
-    instead of waiting for the next poll."""
-    g = _const_gc()
-    g.get_objects.return_value = []
-    g.isenabled.return_value = True
-    seen = MagicMock()
-    with patch("custom_components.gc_manager.gc_controller.gc", g):
-        controller = GcController(hass, _LOG)
-        remove = controller.async_add_listener(seen)
-        await controller.async_collect_and_freeze("startup freeze")
-        assert seen.call_count == 1
-        await controller.async_refresh_counts()
-        assert seen.call_count == 2
-        assert controller.pause_automatic()
-        assert seen.call_count == 3
-        assert controller.resume_automatic()
-        assert seen.call_count == 4
-        remove()
-        await controller.async_unfreeze()
-        assert seen.call_count == 4
-
-
-async def test_every_operation_fires_an_event_with_its_result(hass):
-    """Automations can react to a slow freeze without polling the sensors."""
-    g = _const_gc()
-    events = async_capture_events(hass, EVENT_GC_OPERATION)
-    with patch("custom_components.gc_manager.gc_controller.gc", g):
-        controller = GcController(hass, _LOG)
-        result = await controller.async_collect_and_freeze("startup freeze")
-        await controller.async_unfreeze()
-    await hass.async_block_till_done()
-    assert [e.data["action"] for e in events] == ["startup freeze", "unfreeze"]
-    first = events[0].data
-    assert first["collected"] == 1
-    assert first["frozen_before"] == 5000
-    assert first["frozen_after"] == 5000
-    assert first["duration_ms"] == result.duration_ms
-    assert first["at"] == result.at.isoformat()

@@ -41,22 +41,28 @@ keeps it effective over time.
 - **GC threshold override** (optional) — raise CPython's `gc.set_threshold()`
   values so collections run less often; off by default, restored on unload.
 
-All of the above are configurable in the options flow; a freeze with neither
-reset schedule is rejected there. Reloading keeps the heap frozen; disabling or
-removing the integration unfreezes it. Services `gc_manager.freeze`,
-`gc_manager.unfreeze`, and `gc_manager.maintain` expose the operations manually.
+All of the above are configurable in the options flow. Services
+`gc_manager.freeze`, `gc_manager.unfreeze`, and `gc_manager.maintain` expose the
+operations manually.
 
-Diagnostic sensors, all under one **GC Manager** device, report the frozen
-object count (and, opt-in, the tracked count, whose sample walks the unfrozen
-heap), the gen-2 pause (last and peak since the last freeze), the last operation
-and how much it reclaimed, and per-generation gc counts/thresholds/stats; a
-binary sensor reports whether automatic gc is on.
+Diagnostic sensors, all under one **GC Manager** device, report the frozen and
+tracked object counts, the gen-2 pause (last and peak since the last freeze),
+the last operation and how much it reclaimed, and per-generation gc
+counts/thresholds/stats; a binary sensor reports whether automatic gc is on.
 
-Every operation also fires a `gc_manager_operation` event on the bus carrying
-the action, objects collected, frozen counts before and after, duration in ms
-and timestamp, so an automation can react to a slow freeze without polling. The
-integration's **Download diagnostics** includes the options in effect, the
-interpreter's gc thresholds and stats, and the controller's cached telemetry.
+Every operation also fires a `gc_manager_operation` event on the bus, after the
+sensors have updated, so an automation can react to a slow freeze without
+polling. Its data is `action`, `collected`, `frozen_before`, `frozen_after`,
+`duration_ms` and `at` (ISO 8601). `action` is one of `startup freeze`,
+`periodic re-freeze`, `manual freeze (service)`, `unfreeze`,
+`daily maintenance (unfreeze+collect+freeze)`,
+`periodic maintenance (unfreeze+collect+freeze)` or
+`manual maintenance (service)`.
+
+The integration's **Download diagnostics** includes the options as stored
+(before any rounding or defaults), the interpreter's gc thresholds and stats,
+and the controller's cached telemetry, which is empty if the integration isn't
+loaded.
 
 ## Caveats
 

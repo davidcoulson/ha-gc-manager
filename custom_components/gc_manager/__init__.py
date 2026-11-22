@@ -40,7 +40,6 @@ from .const import (
     CONF_THRESHOLD_GEN0,
     CONF_THRESHOLD_GEN1,
     CONF_THRESHOLD_GEN2,
-    COUNT_SENSOR_KEYS,
     DEFAULT_DAILY_MAINTENANCE,
     DEFAULT_DAILY_TIME,
     DEFAULT_FREEZE_ON_START,
@@ -100,6 +99,7 @@ def _parse_hms(value: str) -> tuple[int, int, int]:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up GC Manager and arm its schedules."""
+    # Defensive: HA only sets up NOT_LOADED entries, so this shouldn't trigger.
     previous = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if previous is not None:
         await previous.controller.async_close()
@@ -118,7 +118,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _arm_entry(hass, entry, data, source)
         _register_services(hass, controller)
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-        # Arm the startup freeze only after platform setup has succeeded.
+        # Arm the startup freeze only after setup has succeeded: it can dispatch
+        # an immediate freeze, and _teardown cannot recall an already-dispatched
+        # one — so a failing forward_entry_setups must happen first.
         _arm_startup_freeze(hass, entry, data, source)
     except BaseException:
         # A failed setup is not followed by async_unload_entry, so undo the
@@ -209,29 +211,27 @@ def _arm_entry(
             int(source.get(CONF_THRESHOLD_GEN2, DEFAULT_THRESHOLD_GEN2)),
         )
 
-    # ── off-loop sampling of the tracked object count ──────────────────────
-    # Off the loop is not free: the walk holds the GIL for its whole length, so
-    # the event loop stalls while it runs all the same. It feeds only the
-    # tracked-objects sensor, so while that is disabled there is nothing to
-    # sample for (the frozen count is refreshed by each freeze/unfreeze op).
+    # ── off-loop sampling of the frozen + tracked object counts ────────────
+    # Off the loop is not free: both walks hold the GIL for their whole length
+    # (~0.3 s for gc.get_freeze_count() with ~3.5 M frozen objects on Python
+    # 3.14), so the event loop stalls while they run all the same. The counts
+    # feed only their own sensors, so each walk runs only while its sensor is on.
     @callback
-    def _counts_wanted() -> bool:
+    def _count_wanted(key: str) -> bool:
         registry = er.async_get(hass)
-        for key in COUNT_SENSOR_KEYS:
-            entity_id = registry.async_get_entity_id(
-                "sensor", DOMAIN, f"{entry.entry_id}_{key}"
-            )
-            if entity_id is None:
-                return True  # not registered yet (first start): sample
-            reg_entry = registry.async_get(entity_id)
-            if reg_entry is not None and reg_entry.disabled_by is None:
-                return True
-        return False
+        entity_id = registry.async_get_entity_id(
+            "sensor", DOMAIN, f"{entry.entry_id}_{key}"
+        )
+        if entity_id is None:
+            return True  # not registered yet (first start): sample
+        reg_entry = registry.async_get(entity_id)
+        return reg_entry is not None and reg_entry.disabled_by is None
 
     async def _sample_counts(_now=None) -> None:
-        if not _counts_wanted():
-            return
-        await controller.async_refresh_counts()
+        frozen = _count_wanted("frozen_objects")
+        tracked = _count_wanted("tracked_objects")
+        if frozen or tracked:
+            await controller.async_refresh_counts(frozen=frozen, tracked=tracked)
 
     sample_interval = timedelta(
         minutes=int(
@@ -275,6 +275,7 @@ def _arm_entry(
 
         async def _refreeze(_now) -> None:
             if not data.startup_ready:
+                _LOGGER.debug("re-freeze skipped: startup freeze pending")
                 return
             if pause_target and (controller.peak_pause_ms or 0.0) < pause_target:
                 _LOGGER.debug(
@@ -304,8 +305,10 @@ def _arm_entry(
         hour, minute, second = base_hms
 
         async def _daily(_now) -> None:
-            if data.startup_ready:
-                await controller.async_maintenance()
+            if not data.startup_ready:
+                _LOGGER.debug("daily maintenance skipped: startup freeze pending")
+                return
+            await controller.async_maintenance()
 
         data.unsubs.append(
             async_track_time_change(
@@ -329,14 +332,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # HA sets disabled_by before unloading. A disable is indefinite, unlike a
         # reload, so don't leave a frozen heap nobody will maintain.
         await hass.async_add_executor_job(gc.unfreeze)
+        _LOGGER.info("entry disabled; heap unfrozen")
     return unload_ok
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """On uninstall, restore default gc state by undoing any freeze we applied.
 
-    Unload (incl. reload) deliberately leaves the heap frozen for continuity;
-    only true removal reverts it, off the loop.
+    A reload leaves the heap frozen for continuity; disable and removal revert it.
     """
     data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if data is not None:
@@ -384,7 +387,7 @@ def _register_services(hass: HomeAssistant, controller: GcController) -> None:
         await controller.async_unfreeze()
 
     async def _maintain(_call: ServiceCall) -> None:
-        await controller.async_maintenance()
+        await controller.async_maintenance("manual maintenance (service)")
 
     hass.services.async_register(DOMAIN, SERVICE_FREEZE, _freeze)
     hass.services.async_register(DOMAIN, SERVICE_UNFREEZE, _unfreeze)
