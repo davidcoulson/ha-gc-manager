@@ -61,6 +61,10 @@
     "maintain": {
       "name": "Maintain",
       "description": "Run unfreeze + collect + freeze now (the full daily-maintenance reset) to reclaim frozen-then-dead objects."
+    },
+    "reload_code": {
+      "name": "Reload code",
+      "description": "For development. Unloads GC Manager, imports its Python files from disk again and sets it up, so a code change takes effect without restarting Home Assistant. Config flow and manifest changes still need a restart."
     }
   }
 }

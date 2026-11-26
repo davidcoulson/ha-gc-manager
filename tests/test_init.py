@@ -4,6 +4,7 @@
 """Tests for GC Manager setup: schedule arming, services, unload, teardown."""
 
 import asyncio
+import sys
 import threading
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -873,3 +874,38 @@ async def test_maintenance_substitute_waits_for_the_startup_freeze(hass):
     controller.last_freeze_at -= timedelta(hours=4)  # past the debounce
     await _fire_first_refreeze_slot(hass, entry, fake_gc, m_change)
     fake_gc.unfreeze.assert_called_once()
+
+
+@pytest.fixture
+def keep_modules():
+    """Put the originally imported modules back so other tests' patches still hit them."""
+    saved = {n: m for n, m in sys.modules.items() if n.startswith("custom_components.gc_manager")}
+    yield
+    for name in [n for n in sys.modules if n.startswith("custom_components.gc_manager")]:
+        del sys.modules[name]
+    sys.modules.update(saved)
+
+
+async def test_reload_code_replaces_the_modules(hass, keep_modules):
+    """gc_manager.reload_code re-imports the package and sets the entry up again."""
+    entry = _entry(hass, **{CONF_FREEZE_ON_START: False, CONF_SET_THRESHOLDS: False})
+    hass.set_state(CoreState.running)
+    with patch.object(hass.config_entries, "async_forward_entry_setups", AsyncMock()):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert entry.state is ConfigEntryState.LOADED
+        old = sys.modules["custom_components.gc_manager"]
+        old_data = hass.data[DOMAIN][entry.entry_id]
+
+        await hass.services.async_call(DOMAIN, "reload_code", {}, blocking=True)
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert sys.modules["custom_components.gc_manager"] is not old
+    assert hass.data[DOMAIN][entry.entry_id] is not old_data
+    assert hass.services.has_service(DOMAIN, "reload_code")
+    assert hass.services.has_service(DOMAIN, SERVICE_FREEZE)
+    # unloading the last entry removes the gc services but never reload_code
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert hass.services.has_service(DOMAIN, "reload_code")
+    assert not hass.services.has_service(DOMAIN, SERVICE_FREEZE)
